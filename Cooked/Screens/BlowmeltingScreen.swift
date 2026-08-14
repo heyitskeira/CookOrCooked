@@ -62,7 +62,6 @@ class BlowMeltOverlay: StationOverlay {
     var loudness = -60.0        // what the microphone is hearing, in decibels
 
     var isBlowing = false
-    var isTapping = false
     var isTooHot = false
 
     var gaugeHeight = 150.0
@@ -173,22 +172,6 @@ class BlowMeltOverlay: StationOverlay {
     }
 
     // ---------------------------------------------------------------
-    // FALLBACK FOR TESTING
-    // ---------------------------------------------------------------
-
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        isTapping = true
-    }
-
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        isTapping = false
-    }
-
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        isTapping = false
-    }
-
-    // ---------------------------------------------------------------
     // EVERY FRAME
     // ---------------------------------------------------------------
 
@@ -205,10 +188,6 @@ class BlowMeltOverlay: StationOverlay {
 
         isBlowing = loudness >= blowNeeded
 
-        // No microphone available, so a held finger stands in for blowing.
-        if allowTapFallback && recorder == nil {
-            isBlowing = isTapping
-        }
 
         // The fire climbs on its own, and blowing pushes it back down.
         if isBlowing {

@@ -4,6 +4,10 @@
 <dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Cook or Cooked uses the local network to host and join nearby kitchens on the same Wi-Fi.</string>
+	<!-- Bonjour service types this app advertises and browses for.
+	     Required on iOS 14+. Without it NWBrowser silently returns no
+	     results and NWListener never advertises — the lobby just hangs.
+	     Must match KitchenSession.serviceType exactly. -->
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_cookorcooked._tcp</string>

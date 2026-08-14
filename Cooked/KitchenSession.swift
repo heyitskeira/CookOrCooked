@@ -124,7 +124,12 @@ final class KitchenSession: ObservableObject {
 
     func join(_ result: NWBrowser.Result) {
         guard role == .guest else { return }
-        let conn = NWConnection(to: result.endpoint, using: .tcp)
+        // Must match the parameters the browser and listener use. A plain
+        // .tcp connection cannot reach an endpoint discovered over
+        // peer-to-peer (AWDL), so the join silently times out instead.
+        let params = NWParameters.tcp
+        params.includePeerToPeer = true
+        let conn = NWConnection(to: result.endpoint, using: params)
         conn.stateUpdateHandler = { [weak self] state in
             guard case .ready = state else { return }
             Task { @MainActor in

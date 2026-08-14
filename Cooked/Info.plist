@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Bonjour service types this app advertises and browses for.
+	     Required on iOS 14+. Without it NWBrowser silently returns no
+	     results and NWListener never advertises — the lobby just hangs.
+	     Must match KitchenSession.serviceType exactly. -->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_cookorcooked._tcp</string>
+	</array>
+</dict>
+</plist>

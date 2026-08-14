@@ -1,0 +1,84 @@
+# ---------------------------------------------------------------
+# Xcode per-user state
+#
+# This is the important part. xcuserdata holds which files you have
+# open, your scroll position, breakpoints, and the selected scheme.
+# It is binary, it changes every time anyone touches Xcode, and it
+# conflicts on almost every merge.
+# ---------------------------------------------------------------
+
+xcuserdata/
+*.xcuserstate
+*.xcuserdatad/
+*.xcscmblueprint
+*.xccheckout
+
+
+# ---------------------------------------------------------------
+# Build output
+#
+# Generated from source, so there is no reason to track it.
+# ---------------------------------------------------------------
+
+build/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+
+# ---------------------------------------------------------------
+# Swift Package Manager
+#
+# Package.resolved is deliberately NOT ignored. It pins exact
+# dependency versions so everyone builds against the same code.
+# ---------------------------------------------------------------
+
+.build/
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+.swiftpm/configuration/
+Packages/
+
+
+# ---------------------------------------------------------------
+# CocoaPods and Carthage
+#
+# Only relevant if you use them. Harmless to leave in either way.
+# ---------------------------------------------------------------
+
+Pods/
+Carthage/Build/
+
+
+# ---------------------------------------------------------------
+# Playgrounds and misc
+# ---------------------------------------------------------------
+
+timeline.xctimeline
+playground.xcworkspace
+
+
+# ---------------------------------------------------------------
+# macOS
+# ---------------------------------------------------------------
+
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+
+
+# ---------------------------------------------------------------
+# Secrets
+#
+# Add anything holding keys or credentials here before it is ever
+# committed. Once a secret is in git history it is very hard to remove.
+# ---------------------------------------------------------------
+
+*.p12
+*.mobileprovision
+Secrets.swift
+.env

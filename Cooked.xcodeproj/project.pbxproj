@@ -10,22 +10,9 @@
 		22898E9B302A24B3007C992D /* Cooked.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Cooked.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		A1B2C3D40000000000000001 /* Exceptions for "Cooked" folder in "Cooked" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = 22898E9A302A24B3007C992D /* Cooked */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
-
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		22898E9D302A24B3007C992D /* Cooked */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				A1B2C3D40000000000000001 /* Exceptions for "Cooked" folder in "Cooked" target */,
-			);
 			path = Cooked;
 			sourceTree = "<group>";
 		};

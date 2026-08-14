@@ -89,6 +89,16 @@ struct ContentView: View {
                     activeName = "Sifting"
                     activeScene = makeScene(SiftPreviewScene(size: size))
                 }
+                
+                menuButton(title: "Melting") {
+                    activeName = "Melting"
+                    activeScene = makeScene(MeltPreviewScene(size: size))
+                }
+                
+                menuButton(title: "Blow Melt") {
+                    activeName = "Melt with Blow"
+                    activeScene = makeScene(BlowmeltingScreen(size: size))
+                }
  
                 // Delete this button if KitchenScene is not in your project yet.
                 menuButton(title: "Kitchen map") {

@@ -11,7 +11,7 @@ import CoreGraphics
 // MARK: - Stations
 
 enum StationID: String, CaseIterable {
-    case sink, chopping, dryPrep, crusher, stove, mixing, whipping, oven, prep, trash
+    case sink, chopping, dryPrep, crusher, stove, mixing, whipping, oven, prep, trash, storage
 
     var displayName: String {
         switch self {
@@ -25,6 +25,7 @@ enum StationID: String, CaseIterable {
         case .oven:     return "Oven"
         case .prep:     return "Prep counter"
         case .trash:    return "Trash bin"
+        case .storage:  return "Storage"
         }
     }
 
@@ -42,6 +43,7 @@ enum StationID: String, CaseIterable {
         case .oven:     return CGPoint(x: 0.87, y: 0.36)
         case .prep:     return CGPoint(x: 0.52, y: 0.22)
         case .trash:    return CGPoint(x: 0.13, y: 0.20)
+        case .storage:  return CGPoint(x: 0.62, y: 0.52)
         }
     }
 }

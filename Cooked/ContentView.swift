@@ -23,6 +23,9 @@ struct ContentView: View {
     // Whether the storage pantry overlay is showing (Kitchen map only).
     @State private var showStorage = false
 
+    // The chef's hands — shared by Storage (writes) and the InventoryBar (reads).
+    @StateObject private var inventory = PlayerInventory()
+
     var body: some View {
         GeometryReader { geometry in
 
@@ -51,8 +54,17 @@ struct ContentView: View {
                     .padding(.leading, 20)
                     .padding(.top, 16)
 
+                    // Inventory indicator, pinned bottom-centre over the map.
+                    if activeName == "Kitchen map" {
+                        VStack {
+                            Spacer()
+                            InventoryBar(inventory: inventory)
+                                .padding(.bottom, 20)
+                        }
+                    }
+
                     if showStorage {
-                        StorageView(onClose: {
+                        StorageView(inventory: inventory, onClose: {
                             withAnimation(.easeInOut(duration: 0.2)) { showStorage = false }
                         })
                         .transition(.opacity)

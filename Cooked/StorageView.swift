@@ -9,6 +9,8 @@
 import SwiftUI
 
 struct StorageView: View {
+    /// The chef's hands — picking here fills these slots.
+    @ObservedObject var inventory: PlayerInventory
     /// Called when the chef leaves storage (closes the overlay).
     var onClose: () -> Void
 
@@ -82,11 +84,18 @@ struct StorageView: View {
         case .ingredients:
             itemList(Storage.ingredients.map { ($0.id, $0.name) }) { id in
                 guard let ing = Storage.ingredients.first(where: { $0.id == id }) else { return }
-                ingredientDraw = Storage.draw(ing)
+                let draw = Storage.draw(ing)
+                ingredientDraw = draw
+                // Put it in hand (replaces whatever ingredient was held).
+                inventory.pickUp(HeldIngredient(id: draw.ingredient.id,
+                                                name: draw.ingredient.name,
+                                                isRotten: draw.isRotten))
             }
         case .utensils:
             itemList(Storage.utensils.map { ($0.id, $0.name) }) { id in
-                takenUtensil = Storage.utensils.first(where: { $0.id == id })
+                guard let ut = Storage.utensils.first(where: { $0.id == id }) else { return }
+                takenUtensil = ut
+                inventory.pickUp(HeldUtensil(id: ut.id, name: ut.name))
             }
         }
     }
@@ -228,5 +237,5 @@ struct StorageView: View {
 }
 
 #Preview {
-    StorageView(onClose: {})
+    StorageView(inventory: PlayerInventory(), onClose: {})
 }

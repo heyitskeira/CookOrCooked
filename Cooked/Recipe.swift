@@ -10,7 +10,12 @@ import CoreGraphics
 
 // MARK: - Stations
 
-enum StationID: String, CaseIterable {
+// Pure data, read from both the main actor and the nonisolated wire types
+// (GameSnapshot.empty reads Recipe.timeLimit). Under this project's
+// SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor these would otherwise be
+// main-actor isolated and unreachable from there.
+
+nonisolated enum StationID: String, CaseIterable {
     case sink, chopping, dryPrep, crusher, stove, mixing, whipping, oven, prep, trash
 
     var displayName: String {
@@ -48,7 +53,7 @@ enum StationID: String, CaseIterable {
 
 // MARK: - Actions
 
-struct CookAction {
+nonisolated struct CookAction {
     let id: Int
     let name: String
     let station: StationID
@@ -61,7 +66,7 @@ struct CookAction {
 
 // MARK: - Recipe definition
 
-enum Recipe {
+nonisolated enum Recipe {
 
     // ---- Tuning knobs. These are the numbers to play with. ----
 
@@ -189,5 +194,19 @@ final class GameState {
             isOver = true
             didWin = true
         }
+    }
+
+    /// Overwrite with the host's authoritative picture.
+    ///
+    /// In a networked game every device keeps a GameState, but only the host's
+    /// is real. Everyone else's is a mirror refreshed ten times a second, which
+    /// lets all the existing single-player logic — `availableAction(at:)`,
+    /// `blockReason(at:)`, the HUD — keep working untouched.
+    func apply(_ snapshot: GameSnapshot) {
+        completed = Set(snapshot.completed)
+        mess = snapshot.mess
+        timeRemaining = snapshot.timeRemaining
+        isOver = snapshot.isOver
+        didWin = snapshot.didWin
     }
 }

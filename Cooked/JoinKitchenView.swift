@@ -2,17 +2,24 @@
 //  JoinKitchenView.swift
 //  Cooked
 //
-//  Browse the local Wi-Fi for hosted kitchens and join one.
+//  Browse the local Wi-Fi for hosted kitchens, then prove you're in the room
+//  by typing the code off the host's screen.
+//
+//  The list shows every kitchen the radio can find. It deliberately does NOT
+//  filter by distance: ranging each advertiser before drawing its row would
+//  need one UWB session per kitchen, and only one can run at a time. The
+//  distance check happens after you tap.
 //
 
 import SwiftUI
-import Network
 
 struct JoinKitchenView: View {
     @Environment(\.dismiss) private var dismiss
 
-    @StateObject private var session = KitchenSession(role: .guest, playerName: "Chef")
-    @State private var joined = false
+    @StateObject private var session = KitchenSession(role: .guest)
+    @State private var pendingKitchen: DiscoveredKitchen?
+    @State private var typedCode = ""
+    @State private var showLobby = false
 
     var body: some View {
         ZStack {
@@ -20,20 +27,24 @@ struct JoinKitchenView: View {
 
             VStack(spacing: 24) {
                 Text("Join a kitchen")
-                    .font(.system(size: 34, weight: .heavy, design: .rounded))
+                    .font(.system(size: 32, weight: .heavy, design: .rounded))
                     .foregroundStyle(AppTheme.ink)
 
-                if session.discovered.isEmpty {
-                    searching
-                } else {
-                    roomList
+                if let errorText = session.errorText {
+                    Text(errorText)
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundStyle(AppTheme.cream)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 9)
+                        .background(Capsule().fill(AppTheme.tomato))
                 }
+
+                content
             }
             .frame(maxWidth: 560)
             .padding(.horizontal, 40)
             .padding(.vertical, 32)
 
-            // Back button, top-left
             VStack {
                 HStack {
                     backButton
@@ -44,19 +55,74 @@ struct JoinKitchenView: View {
             .padding(24)
         }
         .onAppear { session.startBrowsing() }
-        .fullScreenCover(isPresented: $joined) {
+        .sheet(item: $pendingKitchen) { kitchen in
+            codeEntry(for: kitchen)
+        }
+        .onChange(of: session.phase) { _, phase in
+            // Only ever raise the cover from here. A constant binding would
+            // present fine but leave the lobby's back button unable to close.
+            if phase == .lobby || phase == .playing { showLobby = true }
+        }
+        .fullScreenCover(isPresented: $showLobby) {
             WaitingRoomView(session: session)
+        }
+    }
+
+    // MARK: Body states
+
+    @ViewBuilder
+    private var content: some View {
+        switch session.phase {
+        case .verifying(let status):
+            waiting(status)
+        case .rejected(let reason):
+            rejected(reason)
+        case .hostLeft:
+            rejected(nil, text: "The host closed this kitchen")
+        default:
+            if session.discovered.isEmpty { searching } else { roomList }
         }
     }
 
     private var searching: some View {
         VStack(spacing: 20) {
-            ProgressView()
-                .controlSize(.large)
-                .tint(AppTheme.ink)
+            ProgressView().controlSize(.large).tint(AppTheme.ink)
             Text("Looking for kitchens on your Wi-Fi…")
-                .font(.system(size: 18, weight: .semibold, design: .rounded))
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
                 .foregroundStyle(AppTheme.ink.opacity(0.6))
+            Text("You and the host must be on the same network")
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(AppTheme.ink.opacity(0.4))
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    private func waiting(_ status: String) -> some View {
+        VStack(spacing: 20) {
+            ProgressView().controlSize(.large).tint(AppTheme.ink)
+            Text(status)
+                .font(.system(size: 19, weight: .bold, design: .rounded))
+                .foregroundStyle(AppTheme.ink)
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    private func rejected(_ reason: JoinRejection?, text: String? = nil) -> some View {
+        VStack(spacing: 20) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 40, weight: .bold))
+                .foregroundStyle(AppTheme.tomato)
+
+            Text(text ?? reason?.message ?? "Couldn't join")
+                .font(.system(size: 19, weight: .bold, design: .rounded))
+                .foregroundStyle(AppTheme.ink)
+                .multilineTextAlignment(.center)
+
+            PillButton(title: "Try again",
+                       style: .outlined(background: AppTheme.cream, foreground: AppTheme.ink)) {
+                session.startBrowsing()
+            }
+            .frame(maxWidth: 300)
         }
         .frame(maxHeight: .infinity)
     }
@@ -64,15 +130,62 @@ struct JoinKitchenView: View {
     private var roomList: some View {
         ScrollView {
             VStack(spacing: 14) {
-                ForEach(session.discovered, id: \.self) { result in
-                    RoomRow(name: roomName(result)) {
-                        session.join(result)
-                        joined = true
+                ForEach(session.discovered) { kitchen in
+                    RoomRow(name: kitchen.name) {
+                        typedCode = ""
+                        pendingKitchen = kitchen
                     }
                 }
             }
             .padding(.vertical, 4)
         }
+    }
+
+    // MARK: Code entry
+
+    private func codeEntry(for kitchen: DiscoveredKitchen) -> some View {
+        VStack(spacing: 26) {
+            Text(kitchen.name)
+                .font(.system(size: 26, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppTheme.ink)
+
+            Text("Type the four digits shown on the host's screen")
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundStyle(AppTheme.ink.opacity(0.55))
+                .multilineTextAlignment(.center)
+
+            TextField("0000", text: $typedCode)
+                .keyboardType(.numberPad)
+                .textContentType(.oneTimeCode)
+                .multilineTextAlignment(.center)
+                .font(.system(size: 44, weight: .heavy, design: .rounded))
+                .frame(maxWidth: 260)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(AppTheme.cream)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(AppTheme.ink, lineWidth: 3)
+                )
+                .onChange(of: typedCode) { _, new in
+                    typedCode = String(new.filter(\.isNumber).prefix(4))
+                }
+
+            PillButton(title: "Join",
+                       style: .filled(background: AppTheme.tomato, foreground: AppTheme.cream)) {
+                guard let code = RoomCode(typedCode) else { return }
+                pendingKitchen = nil
+                session.join(kitchen: kitchen.id, code: code)
+            }
+            .frame(maxWidth: 300)
+            .opacity(RoomCode(typedCode) == nil ? 0.5 : 1)
+            .disabled(RoomCode(typedCode) == nil)
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AppTheme.background)
     }
 
     private var backButton: some View {
@@ -89,14 +202,6 @@ struct JoinKitchenView: View {
                 .shadow(color: AppTheme.ink.opacity(0.25), radius: 4, x: 0, y: 3)
         }
         .accessibilityLabel("Back")
-    }
-
-    // Bonjour service name == the kitchen name the host advertised
-    private func roomName(_ result: NWBrowser.Result) -> String {
-        if case let .service(name, _, _, _) = result.endpoint {
-            return name
-        }
-        return "Kitchen"
     }
 }
 
@@ -117,7 +222,7 @@ private struct RoomRow: View {
                     .overlay(Circle().stroke(AppTheme.ink, lineWidth: 3))
 
                 Text(name)
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .font(.system(size: 21, weight: .bold, design: .rounded))
                     .foregroundStyle(AppTheme.ink)
                     .lineLimit(1)
 

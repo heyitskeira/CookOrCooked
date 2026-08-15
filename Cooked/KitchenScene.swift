@@ -7,13 +7,23 @@
 
 import SpriteKit
 
+// Explicit even though SKScene already inherits main-actor isolation from
+// UIResponder — this scene touches KitchenSession, which is @MainActor, and
+// being explicit means a future SDK change can't silently break that.
+@MainActor
 final class KitchenScene: SKScene {
 
     // MARK: State
 
+    /// nil = offline single player, exactly as before. Non-nil = the host's
+    /// snapshot drives everything shared, and this scene only owns the local
+    /// chef's movement (predicted locally so it stays smooth between packets).
+    weak var session: KitchenSession?
+
     private let state = GameState()
 
     private var chef = SKShapeNode(circleOfRadius: 13)
+    private var remoteChefs: [String: SKShapeNode] = [:]
     private var stationNodes: [StationID: SKShapeNode] = [:]
     private var stationPoints: [StationID: CGPoint] = [:]
     private var checklistLabels: [Int: SKLabelNode] = [:]
@@ -73,12 +83,65 @@ final class KitchenScene: SKScene {
     }
 
     private func buildChef() {
-        chef.fillColor = SKColor(red: 0.85, green: 0.35, blue: 0.19, alpha: 1)
+        let index = session?.localPlayer?.colorIndex ?? 0
+        chef.fillColor = Self.colour(index)
         chef.strokeColor = ink
         chef.lineWidth = 1.5
         chef.zPosition = 5
         chef.position = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
         addChild(chef)
+    }
+
+    private static func colour(_ index: Int) -> SKColor {
+        let c = PlayerPalette.components(index)
+        return SKColor(red: c.r, green: c.g, blue: c.b, alpha: 1)
+    }
+
+    // MARK: Remote chefs
+    //
+    // One circle per other player, positioned from the host's snapshot. Unit
+    // coordinates are used on the wire so a host on an iPad and a guest on an
+    // iPhone put each other in the same place.
+
+    private func syncRemoteChefs(_ session: KitchenSession) {
+        let others = session.snapshot.chefs.filter { $0.playerID != session.localPlayerID }
+        let living = Set(others.map(\.playerID))
+
+        for (id, node) in remoteChefs where !living.contains(id) {
+            node.removeFromParent()
+            remoteChefs.removeValue(forKey: id)
+        }
+
+        for other in others {
+            let player = session.players.first { $0.id == other.playerID }
+            let node = remoteChefs[other.playerID] ?? makeRemoteChef(for: other.playerID)
+            let target = CGPoint(x: CGFloat(other.x) * size.width,
+                                 y: CGFloat(other.y) * size.height)
+
+            // Snapshots land at 10Hz; the scene runs at 60. Easing between
+            // them hides the gap without any real interpolation machinery.
+            node.position = CGPoint(x: node.position.x + (target.x - node.position.x) * 0.35,
+                                    y: node.position.y + (target.y - node.position.y) * 0.35)
+
+            let connected = player?.isConnected ?? true
+            node.fillColor = connected
+                ? Self.colour(player?.colorIndex ?? 1)
+                : SKColor(white: 0.72, alpha: 1)
+            node.alpha = connected ? 1 : 0.5
+            // A ring means they're heads-down at a station and can't see you.
+            node.lineWidth = other.isBusy ? 4 : 1.5
+        }
+    }
+
+    private func makeRemoteChef(for id: String) -> SKShapeNode {
+        let node = SKShapeNode(circleOfRadius: 13)
+        node.strokeColor = ink
+        node.lineWidth = 1.5
+        node.zPosition = 4
+        node.position = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
+        addChild(node)
+        remoteChefs[id] = node
+        return node
     }
 
     private func buildHUD() {
@@ -125,7 +188,10 @@ final class KitchenScene: SKScene {
         guard let touch = touches.first else { return }
 
         if state.isOver {
-            restart()
+            // Only offline games restart on tap. In a networked game the host
+            // owns the lifecycle, and one player tapping must not silently
+            // reset everyone else's kitchen.
+            if session == nil { restart() }
             return
         }
         if activeAction != nil {
@@ -275,7 +341,22 @@ final class KitchenScene: SKScene {
         let dt = min(currentTime - lastUpdate, 0.1)
         lastUpdate = currentTime
 
-        state.tick(dt)
+        if let session {
+            // The host's snapshot is the truth. Mirror it, then draw everyone
+            // else, then tell the host where we are.
+            state.apply(session.snapshot)
+            syncRemoteChefs(session)
+            session.reportPosition(x: Double(chef.position.x / size.width),
+                                   y: Double(chef.position.y / size.height),
+                                   station: chefStation?.rawValue,
+                                   isBusy: activeAction != nil)
+            // Someone else finishing an action can unlock a station in front
+            // of us, so availability has to be re-checked continuously rather
+            // than only when we close an overlay.
+            refreshStations()
+        } else {
+            state.tick(dt)
+        }
 
         if let action = activeAction {
             if isHolding {
@@ -284,7 +365,14 @@ final class KitchenScene: SKScene {
                     bar.xScale = max(0.001, CGFloat(cookProgress / action.duration))
                 }
                 if cookProgress >= action.duration {
-                    state.complete(action)
+                    // Networked: report it and wait for the host to confirm via
+                    // the next snapshot. Never apply it locally as well, or a
+                    // repeatable action would count its mess twice.
+                    if let session {
+                        session.reportCompletion(actionID: action.id)
+                    } else {
+                        state.complete(action)
+                    }
                     closeStation()
                     showToast("\(action.name) — done")
                 }

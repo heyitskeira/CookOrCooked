@@ -38,7 +38,8 @@ private enum GatingTests {
                    GatingEngine.takeOutput(from: board)?.id == .choppedStrawberries && !board.isBlocked)
         }
 
-        // 2) Rotten ingredients: refused at a cooking station, accepted at the bin.
+        // 2) Rotten ingredients: refused at a cooking station, trashed at the bin
+        //    through the same deposit → perform path as every other station.
         do {
             let board = Station(type: .cuttingBoard)
             let bin = Station(type: .garbage)
@@ -46,9 +47,12 @@ private enum GatingTests {
             expect("Cooking station refuses rotten",
                    GatingEngine.canDeposit(rotten, into: board) == false)
             expect("Garbage bin accepts rotten",
-                   GatingEngine.throwAway(rotten, at: bin) == true)
+                   GatingEngine.canDeposit(rotten, into: bin) == true)
             expect("Garbage bin refuses a fresh item",
-                   GatingEngine.throwAway(FoodItem(id: .sugar), at: bin) == false)
+                   GatingEngine.canDeposit(FoodItem(id: .sugar), into: bin) == false)
+            GatingEngine.deposit(rotten, into: bin)
+            expect("Throwing out the rotten item is trashed",
+                   GatingEngine.perform(at: bin, holdingUtensil: nil) == .trashed)
         }
 
         // 3) Make dough needs ALL five + mixer.

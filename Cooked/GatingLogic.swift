@@ -8,12 +8,15 @@
 //
 //  How it works, in one breath:
 //    Chefs DEPOSIT ingredients (one hand at a time) into a station. The station
-//    ACCUMULATES them. When a station holds the EXACT set an action needs AND a
-//    chef is holding the right utensil AND any prep is satisfied (hot oven), the
-//    action can be PERFORMED. Performing consumes the deposited ingredients and
-//    leaves the result sitting ON the station. That result blocks the station
-//    until someone TAKES it. Rotten ingredients are refused everywhere except
-//    the garbage bin.
+//    ACCUMULATES them. When a station holds what an action needs AND a chef is
+//    holding the right utensil AND any prep is satisfied (hot oven), the action
+//    can be PERFORMED. Performing consumes the deposited ingredients and applies
+//    the action's effect. Producing actions leave their result ON the station,
+//    which blocks it until someone TAKES it.
+//
+//  The garbage bin is just another station: its action accepts ANY rotten
+//  ingredient and discards it. No special-casing — the "any rotten" rule is
+//  declared as data on the recipe, so it runs through the same path as the rest.
 //
 //  Decoupled on purpose: items are identified by their own enums here, so this
 //  file builds and tests on its own. It gets mapped to PlayerInventory /
@@ -107,71 +110,84 @@ enum StationType: String, CaseIterable {
 
 // MARK: - Recipes (the 12 actions, as data)
 
+/// What a station must hold for an action to fire.
+enum InputRequirement: Equatable {
+    case exact(Set<FoodID>)   // an exact set of ingredients (empty = none needed)
+    case anyRotten            // exactly one rotten ingredient, any kind (garbage)
+}
+
+/// What performing the action does.
+enum ActionEffect: Equatable {
+    case produce(FoodID)      // consume inputs, leave this result on the station
+    case heatOven             // set the oven hot (no inputs consumed)
+    case serve                // consume the cake — you win
+    case discard              // consume the rotten ingredient — trashed
+}
+
 struct GatingRecipe: Equatable {
     let id: String
     let name: String
     let station: StationType
-    let inputs: Set<FoodID>      // exact ingredient set the station must hold
-    let utensil: UtensilID?      // utensil the chef must be holding, or nil
-    let requiresHotOven: Bool    // prep gate
-    let heatsOven: Bool          // pre-heat action sets the oven hot
-    let output: FoodID?          // what's produced and left on the station; nil = consumed (serve)
+    let input: InputRequirement
+    let utensil: UtensilID?      // utensil the chef must hold, or nil
+    let requiresHotOven: Bool
+    let effect: ActionEffect
 }
 
 enum Recipes {
     static let all: [GatingRecipe] = [
-        GatingRecipe(id: "chop",     name: "Chop strawberries", station: .cuttingBoard,
-                     inputs: [.strawberries], utensil: .knife,
-                     requiresHotOven: false, heatsOven: false, output: .choppedStrawberries),
+        GatingRecipe(id: "chop", name: "Chop strawberries", station: .cuttingBoard,
+                     input: .exact([.strawberries]), utensil: .knife,
+                     requiresHotOven: false, effect: .produce(.choppedStrawberries)),
 
         GatingRecipe(id: "macerate", name: "Macerate strawberries", station: .bowl,
-                     inputs: [.choppedStrawberries, .sugar], utensil: nil,
-                     requiresHotOven: false, heatsOven: false, output: .maceratedStrawberries),
+                     input: .exact([.choppedStrawberries, .sugar]), utensil: nil,
+                     requiresHotOven: false, effect: .produce(.maceratedStrawberries)),
 
-        GatingRecipe(id: "sift",     name: "Sift flour", station: .bowl,
-                     inputs: [.flour], utensil: .sifter,
-                     requiresHotOven: false, heatsOven: false, output: .siftedFlour),
+        GatingRecipe(id: "sift", name: "Sift flour", station: .bowl,
+                     input: .exact([.flour]), utensil: .sifter,
+                     requiresHotOven: false, effect: .produce(.siftedFlour)),
 
-        GatingRecipe(id: "melt",     name: "Melt butter", station: .stove,
-                     inputs: [.butter], utensil: .pan,
-                     requiresHotOven: false, heatsOven: false, output: .meltedButter),
+        GatingRecipe(id: "melt", name: "Melt butter", station: .stove,
+                     input: .exact([.butter]), utensil: .pan,
+                     requiresHotOven: false, effect: .produce(.meltedButter)),
 
-        GatingRecipe(id: "beat",     name: "Beat egg", station: .bowl,
-                     inputs: [.egg], utensil: .whisk,
-                     requiresHotOven: false, heatsOven: false, output: .beatenEgg),
+        GatingRecipe(id: "beat", name: "Beat egg", station: .bowl,
+                     input: .exact([.egg]), utensil: .whisk,
+                     requiresHotOven: false, effect: .produce(.beatenEgg)),
 
-        GatingRecipe(id: "dough",    name: "Make dough", station: .bowl,
-                     inputs: [.siftedFlour, .meltedButter, .beatenEgg, .sugar, .cream], utensil: .mixer,
-                     requiresHotOven: false, heatsOven: false, output: .rawDough),
+        GatingRecipe(id: "dough", name: "Make dough", station: .bowl,
+                     input: .exact([.siftedFlour, .meltedButter, .beatenEgg, .sugar, .cream]), utensil: .mixer,
+                     requiresHotOven: false, effect: .produce(.rawDough)),
 
-        GatingRecipe(id: "whip",     name: "Whip cream", station: .bowl,
-                     inputs: [.cream, .sugar], utensil: .whisk,
-                     requiresHotOven: false, heatsOven: false, output: .whippedCream),
+        GatingRecipe(id: "whip", name: "Whip cream", station: .bowl,
+                     input: .exact([.cream, .sugar]), utensil: .whisk,
+                     requiresHotOven: false, effect: .produce(.whippedCream)),
 
-        GatingRecipe(id: "preheat",  name: "Pre-heat oven", station: .oven,
-                     inputs: [], utensil: nil,
-                     requiresHotOven: false, heatsOven: true, output: nil),
+        GatingRecipe(id: "preheat", name: "Pre-heat oven", station: .oven,
+                     input: .exact([]), utensil: nil,
+                     requiresHotOven: false, effect: .heatOven),
 
-        GatingRecipe(id: "bake",     name: "Bake base", station: .oven,
-                     inputs: [.rawDough], utensil: nil,
-                     requiresHotOven: true, heatsOven: false, output: .bakedBase),
+        GatingRecipe(id: "bake", name: "Bake base", station: .oven,
+                     input: .exact([.rawDough]), utensil: nil,
+                     requiresHotOven: true, effect: .produce(.bakedBase)),
 
         GatingRecipe(id: "assemble", name: "Assemble & decorate cake", station: .table,
-                     inputs: [.bakedBase, .whippedCream, .maceratedStrawberries], utensil: nil,
-                     requiresHotOven: false, heatsOven: false, output: .finishedCake),
+                     input: .exact([.bakedBase, .whippedCream, .maceratedStrawberries]), utensil: nil,
+                     requiresHotOven: false, effect: .produce(.finishedCake)),
 
-        GatingRecipe(id: "serve",    name: "Serve cake", station: .table,
-                     inputs: [.finishedCake], utensil: nil,
-                     requiresHotOven: false, heatsOven: false, output: nil),
+        GatingRecipe(id: "serve", name: "Serve cake", station: .table,
+                     input: .exact([.finishedCake]), utensil: nil,
+                     requiresHotOven: false, effect: .serve),
+
+        // Garbage is just another station with its own action.
+        GatingRecipe(id: "throwGarbage", name: "Throw out rotten", station: .garbage,
+                     input: .anyRotten, utensil: nil,
+                     requiresHotOven: false, effect: .discard),
     ]
 
     static func at(_ station: StationType) -> [GatingRecipe] {
         all.filter { $0.station == station }
-    }
-
-    /// Every ingredient that any action at this station could ever want.
-    static func validInputs(at station: StationType) -> Set<FoodID> {
-        Set(at(station).flatMap { $0.inputs })
     }
 }
 
@@ -209,25 +225,29 @@ enum GatingEngine {
 
     // ---- Depositing ingredients ----
 
-    /// Can this held ingredient be dropped onto this station right now?
+    /// Can this held item be dropped onto this station right now? True if any
+    /// action at the station would accept it as a valid addition.
     static func canDeposit(_ item: FoodItem, into station: Station) -> Bool {
-        // A leftover result blocks everything until it's taken.
-        if station.isBlocked { return false }
+        if station.isBlocked { return false }   // a leftover result blocks everything
 
-        // Garbage bin accepts rotten items only.
-        if station.type == .garbage { return item.isRotten }
-
-        // Cooking stations refuse rotten ingredients outright.
-        if item.isRotten { return false }
-
-        // It has to be something an action here actually uses,
-        // and we don't stack two of the same ingredient.
-        guard Recipes.validInputs(at: station.type).contains(item.id) else { return false }
-        guard !station.deposited.contains(where: { $0.id == item.id }) else { return false }
-        return true
+        for recipe in Recipes.at(station.type) {
+            switch recipe.input {
+            case .exact(let set):
+                // Cooking actions want a fresh, listed ingredient, not duplicated.
+                if !item.isRotten,
+                   set.contains(item.id),
+                   !station.deposited.contains(where: { $0.id == item.id }) {
+                    return true
+                }
+            case .anyRotten:
+                // The bin accepts any rotten item.
+                if item.isRotten { return true }
+            }
+        }
+        return false
     }
 
-    /// Drop the ingredient if allowed. Returns whether it went in.
+    /// Drop the item if allowed. Returns whether it went in.
     @discardableResult
     static func deposit(_ item: FoodItem, into station: Station) -> Bool {
         guard canDeposit(item, into: station) else { return false }
@@ -237,13 +257,21 @@ enum GatingEngine {
 
     // ---- Performing an action ----
 
+    private static func inputSatisfied(_ requirement: InputRequirement, by deposited: [FoodItem]) -> Bool {
+        switch requirement {
+        case .exact(let set):
+            return Set(deposited.map { $0.id }) == set
+        case .anyRotten:
+            return deposited.count == 1 && deposited[0].isRotten
+        }
+    }
+
     /// The one action that can be performed here, given what's deposited and
     /// what the chef is holding. `nil` if nothing is ready yet.
     static func availableAction(at station: Station, holdingUtensil utensil: UtensilID?) -> GatingRecipe? {
         guard !station.isBlocked else { return nil }
-        let have = Set(station.deposited.map { $0.id })
         return Recipes.at(station.type).first { recipe in
-            recipe.inputs == have
+            inputSatisfied(recipe.input, by: station.deposited)
             && recipe.utensil == utensil
             && (!recipe.requiresHotOven || station.isHot)
         }
@@ -253,6 +281,7 @@ enum GatingEngine {
         case produced(FoodItem)   // result now sits on the station
         case ovenHeated           // oven is now hot
         case served               // the cake was served — you win
+        case trashed              // a rotten ingredient was thrown out
         case notReady             // requirements not met
     }
 
@@ -263,34 +292,34 @@ enum GatingEngine {
             return .notReady
         }
 
-        if recipe.heatsOven {
+        switch recipe.effect {
+        case .heatOven:
             station._setHot(true)
             return .ovenHeated
-        }
 
-        station._clearDeposited()          // ingredients are consumed
-        if let output = recipe.output {
+        case .produce(let output):
+            station._clearDeposited()
             let result = FoodItem(id: output)
             station._setOutput(result)     // result blocks the station until taken
             return .produced(result)
-        } else {
-            return .served                 // serve consumes the cake, no leftover
+
+        case .serve:
+            station._clearDeposited()
+            return .served
+
+        case .discard:
+            station._clearDeposited()
+            return .trashed
         }
     }
 
-    // ---- Taking the result / trashing ----
+    // ---- Taking the result ----
 
     /// Pick up the finished result, freeing the station. Goes into a chef's hand.
     static func takeOutput(from station: Station) -> FoodItem? {
         let result = station.output
         station._setOutput(nil)
         return result
-    }
-
-    /// Throw a rotten ingredient in the bin. Only rotten items, only the bin.
-    static func throwAway(_ item: FoodItem, at station: Station) -> Bool {
-        guard station.type == .garbage, item.isRotten else { return false }
-        return true   // caller clears it from the hand
     }
 
     // ---- Explanation for a blocked station (handy for UI/debug later) ----
@@ -302,15 +331,24 @@ enum GatingEngine {
         if availableAction(at: station, holdingUtensil: utensil) != nil {
             return "Ready"
         }
+        if station.type == .garbage {
+            return "Bring a rotten ingredient"
+        }
+
         let have = Set(station.deposited.map { $0.id })
         // Find the closest recipe (most matching ingredients) to explain what's missing.
         let candidate = Recipes.at(station.type)
-            .max(by: { $0.inputs.intersection(have).count < $1.inputs.intersection(have).count })
-        guard let recipe = candidate else { return "Nothing happens here" }
+            .compactMap { recipe -> (GatingRecipe, Set<FoodID>)? in
+                if case .exact(let set) = recipe.input { return (recipe, set) }
+                return nil
+            }
+            .max(by: { $0.1.intersection(have).count < $1.1.intersection(have).count })
 
-        let missingItems = recipe.inputs.subtracting(have).map { $0.displayName }
-        if !missingItems.isEmpty {
-            return "Need: " + missingItems.sorted().joined(separator: ", ")
+        guard let (recipe, needed) = candidate else { return "Nothing happens here" }
+
+        let missing = needed.subtracting(have).map { $0.displayName }
+        if !missing.isEmpty {
+            return "Need: " + missing.sorted().joined(separator: ", ")
         }
         if recipe.requiresHotOven && !station.isHot {
             return "Pre-heat the oven first"

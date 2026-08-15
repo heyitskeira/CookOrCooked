@@ -67,7 +67,7 @@ nonisolated struct CookAction {
 // MARK: - Recipe definition
 
 nonisolated enum Recipe {
-
+    
     // ---- Tuning knobs. These are the numbers to play with. ----
     
     static let timeLimit: TimeInterval = 120      // 2 minutes
@@ -180,7 +180,7 @@ final class GameState {
             didWin = true
         }
     }
-
+    
     /// Overwrite with the host's authoritative picture.
     ///
     /// In a networked game every device keeps a GameState, but only the host's

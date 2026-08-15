@@ -289,7 +289,15 @@ final class KitchenScene: SKScene {
         // put them back in the kitchen.
         overlay.whenFinished = { [weak self] in
             guard let self = self else { return }
-            self.state.complete(action)
+
+            // Networked: report it and let the host confirm via the next
+            // snapshot. Applying it locally too would count it twice.
+            if let session = self.session {
+                session.reportCompletion(actionID: action.id)
+            } else {
+                self.state.complete(action)
+            }
+
             self.closeStation()
             self.showToast("\(action.name) — done")
         }
@@ -335,34 +343,16 @@ final class KitchenScene: SKScene {
                                    y: Double(chef.position.y / size.height),
                                    station: chefStation?.rawValue,
                                    isBusy: activeAction != nil)
-            // Someone else finishing an action can unlock a station in front
-            // of us, so availability has to be re-checked continuously rather
-            // than only when we close an overlay.
+            // Someone else finishing an action can unlock a station in front of
+            // us, so availability has to be re-checked continuously.
             refreshStations()
         } else {
-            state.tick(dt)
+            state.tick(gap)
         }
 
-        if let action = activeAction {
-            if isHolding {
-                cookProgress += dt
-                if let bar = overlay?.childNode(withName: "progress") as? SKSpriteNode {
-                    bar.xScale = max(0.001, CGFloat(cookProgress / action.duration))
-                }
-                if cookProgress >= action.duration {
-                    // Networked: report it and wait for the host to confirm via
-                    // the next snapshot. Never apply it locally as well, or a
-                    // repeatable action would count its mess twice.
-                    if let session {
-                        session.reportCompletion(actionID: action.id)
-                    } else {
-                        state.complete(action)
-                    }
-                    closeStation()
-                    showToast("\(action.name) — done")
-                }
-            }
-        }
+        // Drive whichever station screen is open. Without this the minigames
+        // never advance.
+        stationOverlay?.update(secondsSinceLastFrame: gap)
 
         refreshHUD()
 

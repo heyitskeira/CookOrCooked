@@ -63,47 +63,59 @@ struct ContentView: View {
         ZStack {
             Color(red: 0.11, green: 0.11, blue: 0.13)
                 .ignoresSafeArea()
- 
-            VStack(spacing: 16) {
- 
-                Text("Cook or Cooked")
-                    .font(.title.weight(.semibold))
-                    .foregroundStyle(.white)
- 
-                Text("Pick a screen to test")
-                    .font(.footnote)
-                    .foregroundStyle(.white.opacity(0.5))
-                    .padding(.bottom, 12)
- 
-                menuButton(title: "Whisking") {
-                    activeName = "Whisking"
-                    activeScene = makeScene(WhiskPreviewScene(size: size))
-                }
- 
-                menuButton(title: "Chopping") {
-                    activeName = "Chopping"
-                    activeScene = makeScene(ChopPreviewScene(size: size))
-                }
- 
-                menuButton(title: "Sifting") {
-                    activeName = "Sifting"
-                    activeScene = makeScene(SiftPreviewScene(size: size))
-                }
-                
-                menuButton(title: "Melting") {
-                    activeName = "Melting"
-                    activeScene = makeScene(MeltPreviewScene(size: size))
-                }
-                
-                menuButton(title: "Blow Melt") {
-                    activeName = "Melt with Blow"
-                    activeScene = makeScene(BlowmeltingScreen(size: size))
-                }
- 
-                // Delete this button if KitchenScene is not in your project yet.
-                menuButton(title: "Kitchen map") {
-                    activeName = "Kitchen map"
-                    activeScene = makeScene(KitchenScene(size: size))
+            
+            ScrollView() {
+                VStack(spacing: 16) {
+     
+                    Text("Cook or Cooked")
+                        .font(.title.weight(.semibold))
+                        .foregroundStyle(.white)
+     
+                    Text("Pick a screen to test")
+                        .font(.footnote)
+                        .foregroundStyle(.white.opacity(0.5))
+                        .padding(.bottom, 12)
+     
+                    menuButton(title: "Whisking") {
+                        activeName = "Whisking"
+                        activeScene = makeScene(WhiskPreviewScene(size: size))
+                    }
+     
+                    menuButton(title: "Chopping") {
+                        activeName = "Chopping"
+                        activeScene = makeScene(ChopPreviewScene(size: size))
+                    }
+     
+                    menuButton(title: "Sifting") {
+                        activeName = "Sifting"
+                        activeScene = makeScene(SiftPreviewScene(size: size))
+                    }
+                    
+                    menuButton(title: "Melting") {
+                        activeName = "Melting"
+                        activeScene = makeScene(MeltPreviewScene(size: size))
+                    }
+                    
+                    menuButton(title: "Blow Melt") {
+                        activeName = "Melt with Blow"
+                        activeScene = makeScene(BlowmeltingScreen(size: size))
+                    }
+                    
+                    menuButton(title: "Break Egg") {
+                        activeName = "Try to Break the Egg"
+                        activeScene = makeScene(EggScreen(size: size))
+                    }
+                    
+                    menuButton(title: "Mix all preps to make dough") {
+                        activeName = "Mix to make dough"
+                        activeScene = makeScene(MixingScreen(size: size))
+                    }
+     
+                    // Delete this button if KitchenScene is not in your project yet.
+                    menuButton(title: "Kitchen map") {
+                        activeName = "Kitchen map"
+                        activeScene = makeScene(KitchenScene(size: size))
+                    }
                 }
             }
         }

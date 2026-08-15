@@ -11,7 +11,8 @@ import SwiftUI
 struct CookedApp: App {
     var body: some Scene {
         WindowGroup {
-            StartScreenView()
+//            StartScreenView()
+            ContentView()
         }
     }
 }

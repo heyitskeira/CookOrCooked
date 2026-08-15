@@ -55,7 +55,7 @@ enum ActionMotion {
 
 // MARK: - Actions
 
-struct CookAction {
+nonisolated struct CookAction {
     let id: Int
     let name: String
     let station: StationID
@@ -66,8 +66,8 @@ struct CookAction {
 
 // MARK: - Recipe definition
 
-enum Recipe {
-    
+nonisolated enum Recipe {
+
     // ---- Tuning knobs. These are the numbers to play with. ----
     
     static let timeLimit: TimeInterval = 120      // 2 minutes
@@ -179,5 +179,19 @@ final class GameState {
             isOver = true
             didWin = true
         }
+    }
+
+    /// Overwrite with the host's authoritative picture.
+    ///
+    /// In a networked game every device keeps a GameState, but only the host's
+    /// is real. Everyone else's is a mirror refreshed ten times a second, which
+    /// lets all the existing single-player logic — `availableAction(at:)`,
+    /// `blockReason(at:)`, the HUD — keep working untouched.
+    func apply(_ snapshot: GameSnapshot) {
+        completed = Set(snapshot.completed)
+        mess = snapshot.mess
+        timeRemaining = snapshot.timeRemaining
+        isOver = snapshot.isOver
+        didWin = snapshot.didWin
     }
 }

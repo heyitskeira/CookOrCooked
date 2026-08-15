@@ -12,6 +12,10 @@ struct NumberOfPlayersView: View {
 
     let kitchenName: String
 
+    // Owned here so it survives the transition into the waiting room. The
+    // session is inert until `startHosting()` — creating it advertises nothing.
+    @StateObject private var session = KitchenSession(role: .host)
+
     @State private var selected: Int? = nil
     @State private var showWaitingRoom = false
 
@@ -48,12 +52,7 @@ struct NumberOfPlayersView: View {
             .padding(24)
         }
         .fullScreenCover(isPresented: $showWaitingRoom) {
-            WaitingRoomView(session: KitchenSession(
-                role: .host,
-                playerName: "Host Chef",
-                kitchenName: kitchenName,
-                maxPlayers: selected ?? 2
-            ))
+            WaitingRoomView(session: session)
         }
     }
 
@@ -112,8 +111,8 @@ struct NumberOfPlayersView: View {
     }
 
     private func start() {
-        guard selected != nil else { return }
-        // Player count chosen — open the waiting room to host the lobby
+        guard let selected else { return }
+        session.configure(kitchenName: kitchenName, maxPlayers: selected)
         showWaitingRoom = true
     }
 }

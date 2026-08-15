@@ -19,35 +19,46 @@ struct ContentView: View {
  
     // The name of the open screen, shown next to the Back button.
     @State private var activeName = ""
- 
+
+    // Whether the storage pantry overlay is showing (Kitchen map only).
+    @State private var showStorage = false
+
     var body: some View {
         GeometryReader { geometry in
- 
+
             if let scene = activeScene {
                 // A screen is open, so show it with a Back button on top.
                 ZStack(alignment: .topLeading) {
- 
+
                     SpriteView(scene: scene)
                         .ignoresSafeArea()
- 
+
                     HStack(spacing: 10) {
                         Button("Back") {
                             activeScene = nil
+                            showStorage = false
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
                         .background(.white.opacity(0.15))
                         .foregroundStyle(.white)
                         .clipShape(Capsule())
- 
+
                         Text(activeName)
                             .font(.footnote)
                             .foregroundStyle(.white.opacity(0.6))
                     }
                     .padding(.leading, 20)
                     .padding(.top, 16)
+
+                    if showStorage {
+                        StorageView(onClose: {
+                            withAnimation(.easeInOut(duration: 0.2)) { showStorage = false }
+                        })
+                        .transition(.opacity)
+                    }
                 }
- 
+
             } else {
                 // No screen open, so show the menu.
                 menu(size: geometry.size)
@@ -93,7 +104,12 @@ struct ContentView: View {
                 // Delete this button if KitchenScene is not in your project yet.
                 menuButton(title: "Kitchen map") {
                     activeName = "Kitchen map"
-                    activeScene = makeScene(KitchenScene(size: size))
+                    let scene = KitchenScene(size: size)
+                    scene.scaleMode = .resizeFill
+                    scene.onOpenStorage = {
+                        withAnimation(.easeInOut(duration: 0.2)) { showStorage = true }
+                    }
+                    activeScene = scene
                 }
             }
         }

@@ -11,6 +11,10 @@ final class KitchenScene: SKScene {
 
     // MARK: State
 
+    /// Called when the chef reaches the storage station. ContentView wires this
+    /// to present the SwiftUI StorageView over the scene.
+    var onOpenStorage: (() -> Void)?
+
     private let state = GameState()
 
     private var chef = SKShapeNode(circleOfRadius: 13)
@@ -188,6 +192,11 @@ final class KitchenScene: SKScene {
 
     private func arrive(at station: StationID) {
         chefStation = station
+        // Storage isn't a recipe action — it opens the SwiftUI pantry overlay.
+        if station == .storage {
+            onOpenStorage?()
+            return
+        }
         if let action = state.availableAction(at: station) {
             openStation(action)
         } else {
@@ -326,7 +335,8 @@ final class KitchenScene: SKScene {
     /// Green outline = something is doable here right now.
     private func refreshStations() {
         for (id, node) in stationNodes {
-            let ready = state.availableAction(at: id) != nil
+            // Storage is always open for business.
+            let ready = id == .storage || state.availableAction(at: id) != nil
             node.strokeColor = ready
                 ? SKColor(red: 0.15, green: 0.55, blue: 0.30, alpha: 1)
                 : SKColor(white: 0.72, alpha: 1)

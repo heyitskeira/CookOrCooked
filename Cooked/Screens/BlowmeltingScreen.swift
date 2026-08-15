@@ -23,7 +23,6 @@ import AVFoundation
 
 
 class BlowMeltOverlay: StationOverlay {
-
     // ---- Settings ----
 
     // How loud the blowing has to be before it counts.

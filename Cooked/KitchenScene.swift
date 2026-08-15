@@ -1,5 +1,5 @@
 //
-//  Untitled.swift
+//  KitchenScene.swift
 //  Cooked
 //
 //  Created by Keira on 10/08/26.
@@ -22,12 +22,11 @@ final class KitchenScene: SKScene {
     private let hudMess = SKLabelNode(fontNamed: "AvenirNext-Regular")
     private let toast   = SKLabelNode(fontNamed: "AvenirNext-Regular")
 
-    private var overlay: SKNode?
-    private var overlayFill: SKSpriteNode?
-    private var overlayHint = SKLabelNode(fontNamed: "AvenirNext-Regular")
+    /// The station screen currently open, if any. While this exists the
+    /// player is heads-down and cannot see the kitchen.
+    private var stationOverlay: StationOverlay?
+    private var endOverlay: SKNode?
     private var activeAction: CookAction?
-    private var cookProgress: TimeInterval = 0
-    private var isHolding = false
 
     private var chefStation: StationID?
     private var isWalking = false
@@ -40,6 +39,10 @@ final class KitchenScene: SKScene {
 
     override func didMove(to view: SKView) {
         backgroundColor = paper
+
+        // Needed for the two finger pull on the egg screen.
+        view.isMultipleTouchEnabled = true
+
         buildStations()
         buildChef()
         buildHUD()
@@ -124,16 +127,17 @@ final class KitchenScene: SKScene {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first else { return }
 
+        // The game is over, so any tap restarts it.
         if state.isOver {
             restart()
             return
         }
-        if activeAction != nil {
-            isHolding = true
-            overlayHint.text = "Keep holding…"
-            return
-        }
-        guard !isWalking else { return }
+
+        // A station screen is open, so it handles its own touches.
+        if stationOverlay != nil { return }
+
+        // Already walking somewhere.
+        if isWalking { return }
 
         let point = touch.location(in: self)
         if let target = nearestStation(to: point) {
@@ -141,18 +145,12 @@ final class KitchenScene: SKScene {
         }
     }
 
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        isHolding = false
-        if activeAction != nil { overlayHint.text = "Hold to cook" }
-    }
-
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        isHolding = false
-    }
-
+    /// Finds the station closest to where the player tapped, if it is
+    /// close enough to count.
     private func nearestStation(to point: CGPoint) -> StationID? {
         var best: StationID?
-        var bestDistance: CGFloat = 60
+        var bestDistance: CGFloat = 70
+
         for (id, position) in stationPoints {
             let dx = position.x - point.x
             let dy = position.y - point.y
@@ -195,119 +193,93 @@ final class KitchenScene: SKScene {
         }
     }
 
-    // MARK: Station overlay — this is the "going heads-down" moment
+    // MARK: Station screens — the "going heads-down" moment
+
+    /// Builds the right screen for this action and shows it.
+    private func makeOverlay(for action: CookAction) -> StationOverlay {
+        switch action.motion {
+        case .chop:
+            return ChopOverlay(screenSize: size, actionName: action.name)
+        case .whisk:
+            return WhiskOverlay(screenSize: size, actionName: action.name)
+        case .mix:
+            return MixOverlay(screenSize: size, actionName: action.name)
+        case .sift:
+            return SiftOverlay(screenSize: size, actionName: action.name)
+        case .melt:
+            return MeltOverlay(screenSize: size, actionName: action.name)
+        case .breakEgg:
+            return EggOverlay(screenSize: size, actionName: action.name)
+        case .hold:
+            return HoldOverlay(screenSize: size, actionName: action.name)
+        }
+    }
 
     private func openStation(_ action: CookAction) {
         activeAction = action
-        cookProgress = 0
-        isHolding = false
 
-        let node = SKNode()
-        node.zPosition = 100
+        let overlay = makeOverlay(for: action)
 
-        // Opaque fill. The kitchen, the timer and the checklist all vanish.
-        let fill = SKSpriteNode(color: SKColor(red: 0.11, green: 0.11, blue: 0.13, alpha: 1),
-                                size: size)
-        fill.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        node.addChild(fill)
-        overlayFill = fill
+        // When the player finishes the motion, mark the action done and
+        // put them back in the kitchen.
+        overlay.whenFinished = { [weak self] in
+            guard let self = self else { return }
+            self.state.complete(action)
+            self.closeStation()
+            self.showToast("\(action.name) — done")
+        }
 
-        let station = SKLabelNode(fontNamed: "AvenirNext-Regular")
-        station.text = action.station.displayName.uppercased()
-        station.fontSize = 12
-        station.fontColor = SKColor(white: 0.55, alpha: 1)
-        station.position = CGPoint(x: size.width / 2, y: size.height / 2 + 66)
-        node.addChild(station)
+        addChild(overlay)
+        stationOverlay = overlay
 
-        let title = SKLabelNode(fontNamed: "AvenirNext-DemiBold")
-        title.text = action.name
-        title.fontSize = 26
-        title.fontColor = .white
-        title.position = CGPoint(x: size.width / 2, y: size.height / 2 + 24)
-        node.addChild(title)
-
-        let barWidth: CGFloat = min(300, size.width - 80)
-        let track = SKSpriteNode(color: SKColor(white: 0.25, alpha: 1),
-                                 size: CGSize(width: barWidth, height: 10))
-        track.position = CGPoint(x: size.width / 2, y: size.height / 2 - 16)
-        node.addChild(track)
-
-        let bar = SKSpriteNode(color: SKColor(red: 0.95, green: 0.6, blue: 0.25, alpha: 1),
-                               size: CGSize(width: barWidth, height: 10))
-        bar.anchorPoint = CGPoint(x: 0, y: 0.5)
-        bar.position = CGPoint(x: size.width / 2 - barWidth / 2, y: size.height / 2 - 16)
-        bar.xScale = 0.001
-        bar.name = "progress"
-        node.addChild(bar)
-
-        overlayHint.text = "Hold to cook"
-        overlayHint.fontSize = 14
-        overlayHint.fontColor = SKColor(white: 0.6, alpha: 1)
-        overlayHint.position = CGPoint(x: size.width / 2, y: size.height / 2 - 52)
-        overlayHint.removeFromParent()
-        node.addChild(overlayHint)
-
-        let blind = SKLabelNode(fontNamed: "AvenirNext-Regular")
-        blind.text = "You cannot see the kitchen while you work"
-        blind.fontSize = 11
-        blind.fontColor = SKColor(white: 0.4, alpha: 1)
-        blind.position = CGPoint(x: size.width / 2, y: 30)
-        node.addChild(blind)
-
-        addChild(node)
-        overlay = node
+        // Hide the kitchen HUD while heads-down.
+        setHUDHidden(true)
     }
 
     private func closeStation() {
-        overlay?.removeFromParent()
-        overlay = nil
-        overlayFill = nil
+        stationOverlay?.cleanUp()
+        stationOverlay?.removeFromParent()
+        stationOverlay = nil
         activeAction = nil
-        isHolding = false
-        cookProgress = 0
+
+        setHUDHidden(false)
         refreshStations()
+    }
+
+    private func setHUDHidden(_ hidden: Bool) {
+        hudTime.isHidden = hidden
+        hudMess.isHidden = hidden
+        toast.isHidden = hidden
+        for label in checklistLabels.values { label.isHidden = hidden }
     }
 
     // MARK: Loop
 
     override func update(_ currentTime: TimeInterval) {
         if lastUpdate == 0 { lastUpdate = currentTime }
-        let dt = min(currentTime - lastUpdate, 0.1)
+        var gap = currentTime - lastUpdate
+        if gap > 0.1 { gap = 0.1 }
         lastUpdate = currentTime
 
-        state.tick(dt)
+        state.tick(gap)
 
-        if let action = activeAction {
-            if isHolding {
-                cookProgress += dt
-                if let bar = overlay?.childNode(withName: "progress") as? SKSpriteNode {
-                    bar.xScale = max(0.001, CGFloat(cookProgress / action.duration))
-                }
-                if cookProgress >= action.duration {
-                    state.complete(action)
-                    closeStation()
-                    showToast("\(action.name) — done")
-                }
-            }
-        }
+        // Drive whichever station screen is open.
+        stationOverlay?.update(secondsSinceLastFrame: gap)
 
         refreshHUD()
+
         if state.isOver { presentEnd() }
     }
 
     private func refreshHUD() {
-        // While heads-down, the HUD is hidden too. That is the point.
-        let blind = (activeAction != nil)
-        hudTime.isHidden = blind
-        hudMess.isHidden = blind
-        for label in checklistLabels.values { label.isHidden = blind }
+        // Nothing to draw while the player is heads-down.
+        if stationOverlay != nil { return }
 
         let seconds = Int(state.timeRemaining)
         hudTime.text = String(format: "%d:%02d", seconds / 60, seconds % 60)
         hudTime.fontColor = state.timeRemaining < 45 ? SKColor.red : ink
-        hudMess.text = "mess \(state.mess)   ·   \(state.completedGoalCount)/\(Recipe.goalIDs.count)"
+        hudMess.text = "\(state.completedGoalCount)/\(Recipe.goalIDs.count)"
 
-        guard !blind else { return }
         for (id, label) in checklistLabels {
             guard let action = Recipe.action(id) else { continue }
             if state.completed.contains(id) {
@@ -341,8 +313,14 @@ final class KitchenScene: SKScene {
         toast.run(.sequence([.wait(forDuration: 1.6), .fadeOut(withDuration: 0.4)]))
     }
 
+    // MARK: End of game
+
     private func presentEnd() {
-        guard overlay == nil else { return }
+        if endOverlay != nil { return }
+
+        // Close any station screen that was still open.
+        closeStation()
+
         let node = SKNode()
         node.zPosition = 200
 
@@ -367,21 +345,20 @@ final class KitchenScene: SKScene {
         node.addChild(sub)
 
         addChild(node)
-        overlay = node
-        overlayFill = fill
+        endOverlay = node
     }
 
     private func restart() {
-        overlay?.removeFromParent()
-        overlay = nil
-        overlayFill = nil
-        activeAction = nil
-        isHolding = false
-        cookProgress = 0
+        endOverlay?.removeFromParent()
+        endOverlay = nil
+
+        closeStation()
+
         chefStation = nil
         isWalking = false
         chef.removeAllActions()
         chef.position = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
+
         state.reset()
         refreshStations()
     }

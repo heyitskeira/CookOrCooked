@@ -25,7 +25,8 @@ struct KitchenNameView: View {
     }
 
     private var canCreate: Bool {
-        !trimmedName.isEmpty && chefCount != nil
+        // Chef count is chosen on the next screen (their NumberOfPlayersView).
+        !trimmedName.isEmpty
     }
 
     var body: some View {
@@ -75,12 +76,9 @@ struct KitchenNameView: View {
             }
             .frame(width: w, height: h)
             .fullScreenCover(isPresented: $showWaitingRoom) {
-                WaitingRoomView(session: KitchenSession(
-                    role: .host,
-                    playerName: "Host Chef",
-                    kitchenName: trimmedName,
-                    maxPlayers: chefCount ?? 2
-                ))
+                // Hand off to the team's real flow: their NumberOfPlayersView
+                // creates the multiplayer host session.
+                NumberOfPlayersView(kitchenName: trimmedName)
             }
         }
         .ignoresSafeArea()

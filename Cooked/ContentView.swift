@@ -19,7 +19,11 @@ struct ContentView: View {
  
     // The name of the open screen, shown next to the Back button.
     @State private var activeName = ""
- 
+
+    // Storage pantry overlay + the shared inventory it fills (Kitchen map only).
+    @State private var showStorage = false
+    @StateObject private var inventory = PlayerInventory()
+
     var body: some View {
         GeometryReader { geometry in
  
@@ -33,21 +37,39 @@ struct ContentView: View {
                     HStack(spacing: 10) {
                         Button("Back") {
                             activeScene = nil
+                            showStorage = false
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
                         .background(.white.opacity(0.15))
                         .foregroundStyle(.white)
                         .clipShape(Capsule())
- 
+
                         Text(activeName)
                             .font(.footnote)
                             .foregroundStyle(.white.opacity(0.6))
                     }
                     .padding(.leading, 20)
                     .padding(.top, 16)
+
+                    // Inventory indicator over the kitchen map.
+                    if activeName == "Kitchen map" {
+                        VStack {
+                            Spacer()
+                            InventoryBar(inventory: inventory)
+                                .padding(.bottom, 20)
+                        }
+                    }
+
+                    // Storage pantry, opened from the storage station.
+                    if showStorage {
+                        StorageView(inventory: inventory, onClose: {
+                            withAnimation(.easeInOut(duration: 0.2)) { showStorage = false }
+                        })
+                        .transition(.opacity)
+                    }
                 }
- 
+
             } else {
                 // No screen open, so show the menu.
                 menu(size: geometry.size)
@@ -114,7 +136,13 @@ struct ContentView: View {
                     // Delete this button if KitchenScene is not in your project yet.
                     menuButton(title: "Kitchen map") {
                         activeName = "Kitchen map"
-                        activeScene = makeScene(KitchenScene(size: size))
+                        let scene = KitchenScene(size: size)
+                        scene.scaleMode = .resizeFill
+                        scene.inventory = inventory
+                        scene.onOpenStorage = {
+                            withAnimation(.easeInOut(duration: 0.2)) { showStorage = true }
+                        }
+                        activeScene = scene
                     }
                 }
             }

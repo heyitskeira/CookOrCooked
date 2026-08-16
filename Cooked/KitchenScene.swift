@@ -20,6 +20,12 @@ final class KitchenScene: SKScene {
     /// chef's movement (predicted locally so it stays smooth between packets).
     weak var session: KitchenSession?
 
+    // Added (additive, non-networked for now):
+    /// The local chef's hands. Gating reads this to require the right utensil.
+    var inventory: PlayerInventory?
+    /// Called when the chef reaches storage — ContentView opens the pantry.
+    var onOpenStorage: (() -> Void)?
+
     private let state = GameState()
 
     private var chef = SKShapeNode(circleOfRadius: 13)
@@ -251,7 +257,20 @@ final class KitchenScene: SKScene {
 
     private func arrive(at station: StationID) {
         chefStation = station
+
+        // Storage isn't a recipe action — it opens the SwiftUI pantry overlay.
+        if station == .storage {
+            onOpenStorage?()
+            return
+        }
+
         if let action = state.availableAction(at: station) {
+            // Gating seam: the team's system only checks prior actions; here we
+            // also require the correct utensil in hand before the minigame runs.
+            if let block = GatingBridge.blockReason(for: action, holding: inventory) {
+                showToast(block)
+                return
+            }
             openStation(action)
         } else {
             showToast(state.blockReason(at: station))
@@ -386,7 +405,7 @@ final class KitchenScene: SKScene {
     /// Green outline = something is doable here right now.
     private func refreshStations() {
         for (id, node) in stationNodes {
-            let ready = state.availableAction(at: id) != nil
+            let ready = id == .storage || state.availableAction(at: id) != nil
             node.strokeColor = ready
                 ? SKColor(red: 0.15, green: 0.55, blue: 0.30, alpha: 1)
                 : SKColor(white: 0.72, alpha: 1)

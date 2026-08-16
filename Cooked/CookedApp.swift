@@ -12,6 +12,7 @@ struct CookedApp: App {
     var body: some Scene {
         WindowGroup {
             StartScreenView()
+//            ContentView()
         }
     }
 }

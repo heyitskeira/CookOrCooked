@@ -19,7 +19,6 @@ import SwiftUI
 
 
 class StationOverlay: SKNode {
-
     // ---- Settings every station has ----
 
     // How much work the action takes. For whisking and sifting this is

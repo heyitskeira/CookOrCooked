@@ -4,28 +4,28 @@
 //
 //  Created by Agung Ananda on 12/08/26.
 //
+//  The host's screen shows the room code. That is not decoration — it is the
+//  same-room check. To type those four digits a guest has to be able to see
+//  this screen, which no radio can prove.
+//
 
 import SwiftUI
 
 struct WaitingRoomView: View {
     @Environment(\.dismiss) private var dismiss
 
-    @StateObject private var session: KitchenSession
+    @ObservedObject var session: KitchenSession
     @State private var showKitchen = false
 
-    init(session: KitchenSession) {
-        _session = StateObject(wrappedValue: session)
-    }
-
-    private var kitchenName: String { session.kitchenName }
     private var maxPlayers: Int { max(session.maxPlayers, session.players.count) }
 
     var body: some View {
         ZStack {
             AppTheme.background
 
-            VStack(spacing: 28) {
+            VStack(spacing: 24) {
                 header
+                if session.isHost { codeCard }
                 panel
                 startButton
             }
@@ -33,7 +33,6 @@ struct WaitingRoomView: View {
             .padding(.horizontal, 40)
             .padding(.vertical, 32)
 
-            // Back button, top-left
             VStack {
                 HStack {
                     backButton
@@ -44,32 +43,70 @@ struct WaitingRoomView: View {
             .padding(24)
         }
         .onAppear {
-            if session.role == .host { session.startHosting() }
+            if session.isHost { session.startHosting() }
         }
-        .onChange(of: session.started) { started in
-            if started { showKitchen = true }
+        // `initial: true` matters: a guest admitted to a game already in
+        // progress is sent `.start` during admission, so the phase is already
+        // .playing before this view appears and a change-only handler would
+        // strand them in the lobby forever.
+        .onChange(of: session.phase, initial: true) { _, phase in
+            if phase == .playing { showKitchen = true }
         }
         .fullScreenCover(isPresented: $showKitchen) {
-            ContentView()
+            KitchenGameView(session: session)
                 .ignoresSafeArea()
         }
     }
 
     private var header: some View {
         VStack(spacing: 6) {
-            Text(kitchenName)
-                .font(.system(size: 34, weight: .heavy, design: .rounded))
+            Text(session.kitchenName)
+                .font(.system(size: 32, weight: .heavy, design: .rounded))
                 .foregroundStyle(AppTheme.ink)
                 .multilineTextAlignment(.center)
 
-            Text("\(session.players.count)/\(maxPlayers) chefs ready")
-                .font(.system(size: 18, weight: .semibold, design: .rounded))
+            Text("\(session.connectedCount)/\(maxPlayers) chefs ready")
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
                 .foregroundStyle(AppTheme.ink.opacity(0.6))
         }
     }
 
+    // MARK: Room code
+
+    private var codeCard: some View {
+        VStack(spacing: 10) {
+            Text("Room code")
+                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .tracking(1.5)
+                .foregroundStyle(AppTheme.ink.opacity(0.5))
+
+            HStack(spacing: 10) {
+                ForEach(Array(session.roomCode.characters.enumerated()), id: \.offset) { _, digit in
+                    Text(digit)
+                        .font(.system(size: 38, weight: .heavy, design: .rounded))
+                        .foregroundStyle(AppTheme.ink)
+                        .frame(width: 58, height: 72)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(AppTheme.cream)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(AppTheme.ink, lineWidth: 3)
+                        )
+                }
+            }
+
+            Text("Read this out to the chefs in the room")
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(AppTheme.ink.opacity(0.45))
+        }
+    }
+
+    // MARK: Roster
+
     private var panel: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 12) {
             ForEach(0..<maxPlayers, id: \.self) { index in
                 if index < session.players.count {
                     PlayerRow(player: session.players[index])
@@ -78,7 +115,7 @@ struct WaitingRoomView: View {
                 }
             }
         }
-        .padding(24)
+        .padding(20)
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 32, style: .continuous)
@@ -93,7 +130,7 @@ struct WaitingRoomView: View {
 
     @ViewBuilder
     private var startButton: some View {
-        if session.role == .host {
+        if session.isHost {
             PillButton(
                 title: "Start cooking",
                 style: .filled(background: AppTheme.tomato, foreground: AppTheme.cream)
@@ -104,10 +141,9 @@ struct WaitingRoomView: View {
             .disabled(!session.canStart)
         } else {
             HStack(spacing: 12) {
-                ProgressView()
-                    .tint(AppTheme.ink)
+                ProgressView().tint(AppTheme.ink)
                 Text("Waiting for the host to start…")
-                    .font(.system(size: 18, weight: .semibold, design: .rounded))
+                    .font(.system(size: 17, weight: .semibold, design: .rounded))
                     .foregroundStyle(AppTheme.ink.opacity(0.6))
             }
             .frame(height: 72)
@@ -136,22 +172,31 @@ struct WaitingRoomView: View {
 private struct PlayerRow: View {
     let player: Player
 
+    private var colour: Color {
+        let c = PlayerPalette.components(player.colorIndex)
+        return Color(red: c.r, green: c.g, blue: c.b)
+    }
+
     var body: some View {
         HStack(spacing: 14) {
             Image(systemName: "person.fill")
                 .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(AppTheme.cream)
                 .frame(width: 48, height: 48)
-                .background(Circle().fill(AppTheme.tomato))
+                .background(Circle().fill(player.isConnected ? colour : Color.gray))
                 .overlay(Circle().stroke(AppTheme.ink, lineWidth: 3))
 
             Text(player.name)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
-                .foregroundStyle(AppTheme.ink)
+                .font(.system(size: 21, weight: .bold, design: .rounded))
+                .foregroundStyle(AppTheme.ink.opacity(player.isConnected ? 1 : 0.4))
 
             Spacer()
 
-            if player.isHost {
+            if !player.isConnected {
+                Text("RECONNECTING")
+                    .font(.system(size: 11, weight: .heavy, design: .rounded))
+                    .foregroundStyle(AppTheme.ink.opacity(0.5))
+            } else if player.isHost {
                 Text("HOST")
                     .font(.system(size: 13, weight: .heavy, design: .rounded))
                     .foregroundStyle(AppTheme.cream)
@@ -184,7 +229,7 @@ private struct EmptySlotRow: View {
                 .overlay(Circle().stroke(AppTheme.ink.opacity(0.3), lineWidth: 2.5))
 
             Text("Waiting for a chef…")
-                .font(.system(size: 20, weight: .semibold, design: .rounded))
+                .font(.system(size: 19, weight: .semibold, design: .rounded))
                 .foregroundStyle(AppTheme.ink.opacity(0.4))
 
             Spacer()
@@ -204,10 +249,9 @@ private struct EmptySlotRow: View {
 }
 
 #Preview {
-    WaitingRoomView(session: KitchenSession(
-        role: .host,
-        playerName: "Host Chef",
-        kitchenName: "Gordon's Kitchen",
-        maxPlayers: 4
-    ))
+    WaitingRoomView(session: {
+        let s = KitchenSession(role: .host)
+        s.configure(kitchenName: "Gordon's Kitchen", maxPlayers: 4)
+        return s
+    }())
 }

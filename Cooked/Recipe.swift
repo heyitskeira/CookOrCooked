@@ -151,13 +151,21 @@ final class GameState {
     }
     
     /// The single action a chef standing at this station can start right now.
-    func availableAction(at station: StationID) -> CookAction? {
-        Recipe.actions.first { $0.station == station && isUnlocked($0) }
+    /// The two bowls are interchangeable — any bowl action can be done at
+    /// either bowl (agreed with Keira, replaces the bowl1/bowl2 split).
+    static func sharesActions(_ a: StationID, _ b: StationID) -> Bool {
+        if a == b { return true }
+        let bowls: Set<StationID> = [.bowl1, .bowl2]
+        return bowls.contains(a) && bowls.contains(b)
     }
-    
+
+    func availableAction(at station: StationID) -> CookAction? {
+        Recipe.actions.first { GameState.sharesActions(station, $0.station) && isUnlocked($0) }
+    }
+
     /// Why nothing is doable here — used for the on-screen nudge.
     func blockReason(at station: StationID) -> String {
-        let here = Recipe.actions.filter { $0.station == station }
+        let here = Recipe.actions.filter { GameState.sharesActions(station, $0.station) }
         if here.isEmpty { return "Nothing happens here" }
         
         let unfinished = here.filter { !$0.isRepeatable && !completed.contains($0.id) }

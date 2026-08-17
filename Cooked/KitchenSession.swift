@@ -55,6 +55,11 @@ final class KitchenSession: ObservableObject {
     @Published private(set) var roomCode: RoomCode
     @Published private(set) var errorText: String?
 
+    /// The station the local player has been *granted*, if any. The scene may
+    /// only open a station screen when this matches where the chef is standing.
+    /// nil means either not at a station, or still queueing for one.
+    @Published private(set) var heldStation: StationID?
+
     let role: Role
     let localPlayerID: String
 
@@ -63,14 +68,37 @@ final class KitchenSession: ObservableObject {
     var canStart: Bool { isHost && connectedCount >= 2 && phase == .lobby }
     var localPlayer: Player? { players.first { $0.id == localPlayerID } }
 
+    func player(_ id: String) -> Player? { players.first { $0.id == id } }
+
+    /// True while a claim is outstanding. The scene uses this to notice that a
+    /// queue got silently dropped — a host blip, a grant that arrived too late
+    /// — and ask again rather than standing at a counter forever.
+    var isQueueingForStation: Bool { pendingClaim != nil }
+
+    /// Who is working at this station right now — nil if it's free. Drives both
+    /// the "you must wait" toast and the coloured station box.
+    func occupant(of station: StationID) -> Player? {
+        guard let id = snapshot.holder(of: station) else { return nil }
+        return player(id)
+    }
+
+
     // MARK: Machinery
 
     private let transport: KitchenTransport
     private var pump: Task<Void, Never>?
     private var ticker: Timer?
 
+    /// Station the local player is standing at and still waiting for. Kept so
+    /// the claim can be re-sent the instant the holder walks away, which is
+    /// what makes "wait here and it opens by itself" work without polling.
+    private var pendingClaim: StationID?
+
     // Host only
     private let game = GameState()
+    /// station rawValue -> player ID. The authoritative lock table; guests only
+    /// ever see the copy inside the snapshot.
+    private var occupancy: [String: String] = [:]
     private var chefs: [String: ChefSnapshot] = [:]
     private var peerToPlayer: [PeerID: String] = [:]
     private var playerToPeer: [String: PeerID] = [:]
@@ -206,6 +234,9 @@ final class KitchenSession: ObservableObject {
 
     func startCooking() {
         guard isHost, canStart else { return }
+        occupancy.removeAll()
+        heldStation = nil
+        pendingClaim = nil
         transport.broadcast(.start)
         phase = .playing
         startTicking()
@@ -224,6 +255,9 @@ final class KitchenSession: ObservableObject {
         gate = nil
         transport.stop()
         joinQueue.removeAll()
+        occupancy.removeAll()
+        heldStation = nil
+        pendingClaim = nil
         verifying = nil
         peerToPlayer.removeAll()
         playerToPeer.removeAll()
@@ -266,6 +300,104 @@ final class KitchenSession: ObservableObject {
         }
     }
 
+    // MARK: Station locks
+    //
+    // One player per station. The host owns the lock table, so two chefs
+    // arriving in the same frame are serialised by the order their claims
+    // reach the host rather than by whoever's animation happened to finish
+    // first. A refused claim isn't an error — the chef simply stands there and
+    // the claim is retried automatically when the station frees up.
+
+    /// Called by KitchenScene the moment a chef finishes walking to a station.
+    /// The station screen must not open until `heldStation` comes back matching.
+    func claimStation(_ station: StationID) {
+        guard phase == .playing else {
+            // Offline or pre-game there is nobody to contend with.
+            heldStation = station
+            return
+        }
+        if heldStation == station { return }
+
+        // Standing somewhere new — drop whatever we were holding first, so a
+        // player can never sit on two stations at once.
+        if let held = heldStation, held != station { releaseStation() }
+        pendingClaim = station
+
+        if isHost {
+            resolveClaim(station: station.rawValue, playerID: localPlayerID, peer: nil)
+        } else if let hostPeer {
+            transport.send(.claimStation(station: station.rawValue), to: hostPeer)
+        }
+    }
+
+    /// Called when the chef finishes the action, backs out, or walks away.
+    func releaseStation() {
+        let leaving = heldStation ?? pendingClaim
+        heldStation = nil
+        pendingClaim = nil
+        guard let leaving, phase == .playing else { return }
+
+        if isHost {
+            if occupancy[leaving.rawValue] == localPlayerID {
+                occupancy.removeValue(forKey: leaving.rawValue)
+            }
+        } else if let hostPeer {
+            transport.send(.releaseStation(station: leaving.rawValue), to: hostPeer)
+        }
+    }
+
+    /// Re-sends a claim that was refused earlier, but only once the station is
+    /// actually free — otherwise this would turn into a request flood.
+    private func retryPendingClaim() {
+        guard let pending = pendingClaim, heldStation == nil, phase == .playing else { return }
+        if isHost {
+            guard occupancy[pending.rawValue] == nil else { return }
+            resolveClaim(station: pending.rawValue, playerID: localPlayerID, peer: nil)
+        } else {
+            guard snapshot.holder(of: pending) == nil, let hostPeer else { return }
+            transport.send(.claimStation(station: pending.rawValue), to: hostPeer)
+        }
+    }
+
+    /// Host-side adjudication. `peer` is nil when the host is claiming for
+    /// itself, in which case the verdict is applied directly instead of sent.
+    private func resolveClaim(station: String, playerID: String, peer: PeerID?) {
+        guard isHost else { return }
+
+        // A player may hold only one station, so an earlier lock is dropped.
+        // Without this, walking away mid-action would strand the old station.
+        for (key, holder) in occupancy where holder == playerID && key != station {
+            occupancy.removeValue(forKey: key)
+        }
+
+        if let holder = occupancy[station], holder != playerID {
+            if let peer {
+                transport.send(.stationDenied(station: station,
+                                              holderID: holder), to: peer)
+            } else {
+                heldStation = nil   // host keeps `pendingClaim` and waits its turn
+            }
+            return
+        }
+
+        occupancy[station] = playerID
+        if let peer {
+            transport.send(.stationGranted(station: station), to: peer)
+        } else {
+            heldStation = StationID(rawValue: station)
+            pendingClaim = nil
+        }
+    }
+
+    /// Host-side cleanup: drop every lock a player is holding. Used when they
+    /// disconnect and when the game ends.
+    private func releaseAll(for playerID: String) {
+        guard isHost else { return }
+        for (key, holder) in occupancy where holder == playerID {
+            occupancy.removeValue(forKey: key)
+        }
+    }
+
     // MARK: Host — snapshot loop
 
     private func startTicking() {
@@ -280,12 +412,28 @@ final class KitchenSession: ObservableObject {
     private func tick() {
         guard isHost else { return }
         game.tick(0.1)
+
+        // A lock held by a player who has since vanished from the roster would
+        // close a station for the rest of the game with nobody to reopen it.
+        let living = Set(players.map(\.id))
+        occupancy = occupancy.filter { living.contains($0.value) }
+        if game.isOver {
+            occupancy.removeAll()
+            heldStation = nil
+            pendingClaim = nil
+        }
+
+        // The host is a player too, so its own queued claim needs the same
+        // "did it free up yet?" pass the guests get when a snapshot lands.
+        retryPendingClaim()
+
         let shot = GameSnapshot(completed: Array(game.completed),
                                 mess: game.mess,
                                 timeRemaining: game.timeRemaining,
                                 isOver: game.isOver,
                                 didWin: game.didWin,
-                                chefs: players.compactMap { chefs[$0.id] })
+                                chefs: players.compactMap { chefs[$0.id] },
+                                occupancy: occupancy)
         snapshot = shot
         transport.broadcast(.snapshot(shot))
         if game.isOver {
@@ -348,6 +496,21 @@ final class KitchenSession: ObservableObject {
         case .finishedAction(let id):
             guard isHost, let action = Recipe.action(id) else { return }
             game.complete(action)
+            // Free the station immediately rather than waiting for the guest's
+            // own release to arrive — a completed action always ends the visit,
+            // and a packet lost here would lock the station forever.
+            if let claimant = peerToPlayer[peer],
+               occupancy[action.station.rawValue] == claimant {
+                occupancy.removeValue(forKey: action.station.rawValue)
+            }
+
+        case .claimStation(let station):
+            guard isHost, let id = peerToPlayer[peer] else { return }
+            resolveClaim(station: station, playerID: id, peer: peer)
+
+        case .releaseStation(let station):
+            guard isHost, let id = peerToPlayer[peer] else { return }
+            if occupancy[station] == id { occupancy.removeValue(forKey: station) }
 
         // ---- guest side ----
 
@@ -376,9 +539,36 @@ final class KitchenSession: ObservableObject {
             guard !isHost else { return }
             phase = .playing
 
+        case .stationGranted(let station):
+            // Only accept a grant for the station we're actually still queued
+            // for. Walking from A to B while the grant for A is in flight would
+            // otherwise clear the pending claim on B and strand us at a counter
+            // that never opens.
+            guard !isHost, pendingClaim?.rawValue == station else { return }
+            heldStation = pendingClaim
+            pendingClaim = nil
+
+        case .stationDenied(let station, let holderID):
+            guard !isHost, pendingClaim?.rawValue == station else { return }
+            // Stay queued. The chef keeps standing there and the retry fires
+            // as soon as a snapshot shows the station empty.
+            heldStation = nil
+            // Patch the local mirror so the "X is using this" nudge appears
+            // now instead of up to a snapshot later. The next snapshot
+            // overwrites this anyway, so a wrong guess self-corrects.
+            snapshot.occupancy[station] = holderID
+
         case .snapshot(let shot):
             guard !isHost else { return }
             snapshot = shot
+            // A station we're queued for may have just freed up.
+            retryPendingClaim()
+            // The host is the authority on who holds what, so if it says we
+            // don't hold our station any more, we don't — drop the claim and
+            // let the scene close the screen.
+            if let held = heldStation, shot.holder(of: held) != localPlayerID {
+                heldStation = nil
+            }
 
         // ---- both sides ----
 
@@ -539,7 +729,16 @@ final class KitchenSession: ObservableObject {
             if verifying?.peer == peer { finishVerification(admitting: false) }
 
             guard let id = peerToPlayer.removeValue(forKey: peer) else { return }
+            // A late `peerLost` for a socket this player has already replaced
+            // must not tear down the live one — that would strip the lock they
+            // were just granted and drop them from the roster while connected.
+            guard playerToPeer[id] == peer else { return }
             playerToPeer.removeValue(forKey: id)
+
+            // Whatever they were working at is now nobody's. Holding the lock
+            // for a player who might never come back would make the recipe
+            // unwinnable for everyone still in the kitchen.
+            releaseAll(for: id)
 
             if phase == .playing {
                 // Mid-game: hold the slot so their chef doesn't vanish from the
@@ -556,6 +755,11 @@ final class KitchenSession: ObservableObject {
         } else {
             guard peer == hostPeer else { return }
             hostPeer = nil
+            // Our lock lived on the host and has just been dropped there, so
+            // stop believing we hold it — otherwise the station screen stays
+            // open over a frozen kitchen.
+            heldStation = nil
+            pendingClaim = nil
             if phase == .playing {
                 // Grey ourselves out too. Without this the reconnecting player
                 // sees a frozen kitchen and no explanation for it.

@@ -10,7 +10,13 @@ import CoreGraphics
 
 // MARK: - Stations
 
-enum StationID: String, CaseIterable {
+// `nonisolated` because station identifiers cross the wire (they appear in
+// `ChefSnapshot.station` and `GameSnapshot.occupancy`) and the transport
+// decodes on a background callback. Under
+// SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor an unannotated enum — and every
+// member on it — would be main-actor isolated, so touching `rawValue` or
+// `allCases` off the main actor would not compile.
+nonisolated enum StationID: String, CaseIterable {
     case chopping, bowl1, bowl2, table, stove, ovenServe, storage, trash
     
     var displayName: String {
@@ -43,7 +49,7 @@ enum StationID: String, CaseIterable {
 }
 
 //MARK: How an action is performed
-enum ActionMotion {
+nonisolated enum ActionMotion {
     case chop
     case whisk
     case mix

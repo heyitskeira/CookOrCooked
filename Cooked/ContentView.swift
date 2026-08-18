@@ -97,18 +97,23 @@ struct ContentView: View {
                     }
                     
                     menuButton(title: "Blow Melt") {
-                        activeName = "Melt with Blow"
+                        activeName = "Butter Melt"
                         activeScene = makeScene(BlowmeltingScreen(size: size))
                     }
                     
                     menuButton(title: "Break Egg") {
-                        activeName = "Try to Break the Egg"
+                        activeName = "Break Egg"
                         activeScene = makeScene(EggScreen(size: size))
                     }
                     
-                    menuButton(title: "Mix all preps to make dough") {
-                        activeName = "Mix to make dough"
+                    menuButton(title: "Mix prep") {
+                        activeName = "Mixing"
                         activeScene = makeScene(MixingScreen(size: size))
+                    }
+                    
+                    menuButton(title: "Decorate Cake") {
+                        activeName = "Decorating"
+                        activeScene = makeScene(DecorateScreen(size: size))
                     }
      
                     // Delete this button if KitchenScene is not in your project yet.

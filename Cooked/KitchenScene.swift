@@ -108,7 +108,7 @@ final class KitchenScene: SKScene {
 
     private func syncRemoteChefs(_ session: KitchenSession) {
         let others = session.snapshot.chefs.filter { $0.playerID != session.localPlayerID }
-        let living = Set(others.map(\.playerID))
+        let living = Set(others.map(\ChefSnapshot.playerID))
 
         for (id, node) in remoteChefs where !living.contains(id) {
             node.removeFromParent()
@@ -272,7 +272,7 @@ final class KitchenScene: SKScene {
         case .sift:
             return SiftOverlay(screenSize: size, actionName: action.name)
         case .melt:
-            return MeltOverlay(screenSize: size, actionName: action.name)
+            return BlowMeltOverlay(screenSize: size, actionName: action.name)
         case .breakEgg:
             return EggOverlay(screenSize: size, actionName: action.name)
         case .hold:

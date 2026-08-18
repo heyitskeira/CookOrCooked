@@ -102,10 +102,6 @@ enum StationType: String, CaseIterable {
         }
     }
 
-    /// How many physical copies exist. Bowl is the bottleneck, so it gets two.
-    var instanceCount: Int {
-        self == .bowl ? 2 : 1
-    }
 }
 
 // MARK: - Recipes (the 12 actions, as data)
@@ -360,26 +356,6 @@ enum GatingEngine {
     }
 }
 
-// MARK: - Kitchen (all the station instances in one place)
-
-/// Builds one of every station, plus the second bowl. Convenience for tests
-/// and, later, whatever drives the map.
-final class Kitchen {
-    let stations: [Station]
-
-    init() {
-        stations = StationType.allCases.flatMap { type in
-            (0..<type.instanceCount).map { Station(type: type, index: $0) }
-        }
-    }
-
-    func stations(of type: StationType) -> [Station] {
-        stations.filter { $0.type == type }
-    }
-
-    func firstStation(of type: StationType) -> Station? {
-        stations.first { $0.type == type }
-    }
-
-    func reset() { stations.forEach { $0._reset() } }
-}
+// `Kitchen` used to live here — a container that built one Station per type.
+// Removed: station instances belong to the host inside KitchenSession, not in a
+// standalone object, and its only caller was the self-test below.

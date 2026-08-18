@@ -22,25 +22,25 @@ struct WaitingRoomView: View {
     var body: some View {
         ZStack {
             AppTheme.background
-
-            VStack(spacing: 24) {
-                header
-                if session.isHost { codeCard }
-                panel
-                startButton
-            }
-            .frame(maxWidth: 560)
-            .padding(.horizontal, 40)
-            .padding(.vertical, 32)
-
-            VStack {
-                HStack {
-                    backButton
-                    Spacer()
+            
+            ScrollView{
+                VStack {
+                    HStack {
+                        backButton
+                        header
+                            .padding(16)
+                    }
+                
+                VStack(spacing: 24) {
+                    if session.isHost { codeCard }
+                    panel
+                    startButton
                 }
-                Spacer()
+                .frame(maxWidth: 560)
+                .padding(.horizontal, 40)
+                .padding(.vertical, 32)
+                }
             }
-            .padding(24)
         }
         .onAppear {
             if session.isHost { session.startHosting() }

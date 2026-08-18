@@ -17,8 +17,8 @@ import CoreGraphics
 // member on it — would be main-actor isolated, so touching `rawValue` or
 // `allCases` off the main actor would not compile.
 nonisolated enum StationID: String, CaseIterable {
-    case chopping, bowl1, bowl2, table, stove, ovenServe, storage, trash
-    
+    case chopping, bowl1, bowl2, table, stove, ovenServe, storage, trash, drawer
+
     var displayName: String {
         switch self {
         case .chopping: return "Chopping"
@@ -29,6 +29,7 @@ nonisolated enum StationID: String, CaseIterable {
         case .storage : return "Storage"
         case .trash : return "Trash"
         case .ovenServe: return "Oven"
+        case .drawer: return "Drawer"
         }
     }
     
@@ -44,6 +45,7 @@ nonisolated enum StationID: String, CaseIterable {
         case .ovenServe: return CGPoint(x: 0.85, y: 0.24)
         case .table:     return CGPoint(x: 0.50, y: 0.40)
         case .trash:     return CGPoint(x: 0.12, y: 0.24)
+        case .drawer:    return CGPoint(x: 0.50, y: 0.10)
         }
     }
 }
@@ -66,7 +68,21 @@ nonisolated struct CookAction {
     let name: String
     let station: StationID
     var  motion: ActionMotion = .hold
+    /// Actions that must be finished before this one unlocks.
+    ///
+    /// This is the ordering the recipe depends on, and nothing else currently
+    /// enforces it: `GatingBridge.requiredIngredients` only gates *raw*
+    /// ingredients, so bake/assemble/serve would be performable from the first
+    /// second without this. It goes away when GatingLogic's ingredient inputs
+    /// take over — not before.
     let requires: [Int]
+    /// The food this action puts into the chef's hand when it finishes, as a
+    /// `FoodID.rawValue`. nil for actions that make nothing you can carry
+    /// (pre-heating, serving, binning).
+    ///
+    /// Without this the drawer would have nothing prepped to store — the live
+    /// game could only ever produce raw ingredients out of Storage.
+    var produces: String? = nil
     var isRepeatable: Bool = false
 }
 
@@ -80,27 +96,22 @@ nonisolated enum Recipe {
     static let showRecipeChecklist = true         // set false to simulate hidden recipe
     static let chefSpeed: CGFloat = 240           // points per second
     
-    // ---- The 14 actions ----
-    //
-    // Three dependencies were missing from the original spec and are added here:
-    //   - bake now requires pre-heat (7)
-    //   - assemble requires the batter to exist (6)
-    //   - serve requires decorate (11)
-    
+    // ---- The 13 actions ----
+
     static let actions: [CookAction] = [
-        CookAction(id: 1,  name: "Cut strawberries",  station: .chopping, motion: .chop,  requires: []),
-        CookAction(id: 2,  name: "Macerate Strawberries", station: .bowl2,     requires: [1]),
-        CookAction(id: 3,  name: "Sift flour", station: .bowl1, motion: .sift,   requires: []),
-        CookAction(id: 4,  name: "Melt Butter", station: .stove, motion: .melt, requires: []),
-        CookAction(id: 5,  name: "Beat Egg", station: .bowl1, motion: .breakEgg,    requires: []),
-        CookAction(id: 6,  name: "Mix all mixture", station: .bowl1, motion: .mix,  requires: [3,4,5]),
-        CookAction(id: 7,  name: "Whip cream", station: .bowl2, motion: .whisk, requires: []),
-        CookAction(id: 8, name: "Pre-heat oven", station: .ovenServe, requires: []),
-        CookAction(id: 9, name: "Bake base", station: .ovenServe,  requires: [6,8]),
-        CookAction(id: 10, name: "Assemble", station: .table, requires: [2, 7, 9]),
-        CookAction(id: 11, name: "Decorate Cake", station: .table, requires: [1, 7, 10]),
-        CookAction(id: 12, name: "Serve the Cake", station: .ovenServe, requires: [11]),
-        CookAction(id: 13, name: "Threw rotten ingredients", station: .trash, requires: [], isRepeatable: true)
+        CookAction(id: 1,  name: "Cut strawberries",      station: .chopping,  motion: .chop,     requires: [],        produces: "choppedStrawberries"),
+        CookAction(id: 2,  name: "Macerate Strawberries", station: .bowl2,                        requires: [1],       produces: "maceratedStrawberries"),
+        CookAction(id: 3,  name: "Sift flour",            station: .bowl1,     motion: .sift,     requires: [],        produces: "siftedFlour"),
+        CookAction(id: 4,  name: "Melt Butter",           station: .stove,     motion: .melt,     requires: [],        produces: "meltedButter"),
+        CookAction(id: 5,  name: "Beat Egg",              station: .bowl1,     motion: .breakEgg, requires: [],        produces: "beatenEgg"),
+        CookAction(id: 6,  name: "Mix all mixture",       station: .bowl1,     motion: .mix,      requires: [3, 4, 5], produces: "rawDough"),
+        CookAction(id: 7,  name: "Whip cream",            station: .bowl2,     motion: .whisk,    requires: [],        produces: "whippedCream"),
+        CookAction(id: 8,  name: "Pre-heat oven",         station: .ovenServe,                    requires: []),
+        CookAction(id: 9,  name: "Bake base",             station: .ovenServe,                    requires: [6, 8],    produces: "bakedBase"),
+        CookAction(id: 10, name: "Assemble",              station: .table,                        requires: [2, 7, 9]),
+        CookAction(id: 11, name: "Decorate Cake",         station: .table,                        requires: [1, 7, 10], produces: "finishedCake"),
+        CookAction(id: 12, name: "Serve the Cake",        station: .ovenServe,                    requires: [11]),
+        CookAction(id: 13, name: "Threw rotten ingredients", station: .trash,                     requires: [], isRepeatable: true)
     ]
     
     static var goalIDs: [Int] {
@@ -117,7 +128,6 @@ nonisolated enum Recipe {
 final class GameState {
     
     private(set) var completed = Set<Int>()
-    private(set) var mess = 0
     private(set) var timeRemaining = Recipe.timeLimit
     private(set) var isOver = false
     private(set) var didWin = false
@@ -128,7 +138,6 @@ final class GameState {
     
     func reset() {
         completed.removeAll()
-        mess = 0
         timeRemaining = Recipe.timeLimit
         isOver = false
         didWin = false
@@ -151,8 +160,6 @@ final class GameState {
         for requirement in action.requires where !completed.contains(requirement) {
             return false
         }
-        if action.id == 14 && mess == 0 { return false }
-        if action.id == 13 && mess == 0 { return false }
         return true
     }
     
@@ -175,7 +182,8 @@ final class GameState {
         if here.isEmpty { return "Nothing happens here" }
         
         let unfinished = here.filter { !$0.isRepeatable && !completed.contains($0.id) }
-        
+        if unfinished.isEmpty { return "Station finished" }
+
         if let next = unfinished.first {
             let missing = next.requires
                 .filter { !completed.contains($0) }
@@ -203,7 +211,6 @@ final class GameState {
     /// `blockReason(at:)`, the HUD — keep working untouched.
     func apply(_ snapshot: GameSnapshot) {
         completed = Set(snapshot.completed)
-        mess = snapshot.mess
         timeRemaining = snapshot.timeRemaining
         isOver = snapshot.isOver
         didWin = snapshot.didWin

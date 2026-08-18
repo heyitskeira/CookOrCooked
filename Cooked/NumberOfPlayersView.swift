@@ -25,31 +25,33 @@ struct NumberOfPlayersView: View {
         ZStack {
             AppTheme.background
 
-            VStack(spacing: 40) {
-                panel
+            ScrollView{
+                VStack(spacing: 40) {
+                    panel
 
-                PillButton(
-                    title: "Start",
-                    style: .filled(background: AppTheme.tomato, foreground: AppTheme.cream)
-                ) {
-                    start()
+                    PillButton(
+                        title: "Start",
+                        style: .filled(background: AppTheme.tomato, foreground: AppTheme.cream)
+                    ) {
+                        start()
+                    }
+                    .frame(maxWidth: 480)
+                    .opacity(selected == nil ? 0.5 : 1)
+                    .disabled(selected == nil)
                 }
-                .frame(maxWidth: 480)
-                .opacity(selected == nil ? 0.5 : 1)
-                .disabled(selected == nil)
-            }
-            .padding(.horizontal, 40)
+                .padding(.horizontal, 40)
 
-            // Back button, top-left
-            VStack {
-                HStack {
-                    backButton
+                // Back button, top-left
+                VStack {
+                    HStack {
+                        backButton
+                        Spacer()
+                        settingsButton
+                    }
                     Spacer()
-                    settingsButton
                 }
-                Spacer()
+                .padding(24)
             }
-            .padding(24)
         }
         .fullScreenCover(isPresented: $showWaitingRoom) {
             WaitingRoomView(session: session)

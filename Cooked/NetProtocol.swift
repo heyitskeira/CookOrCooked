@@ -62,7 +62,6 @@ nonisolated struct ChefSnapshot: Codable, Equatable {
 /// The complete authoritative picture, broadcast by the host ~10x/second.
 nonisolated struct GameSnapshot: Codable, Equatable {
     var completed: [Int]
-    var mess: Int
     var timeRemaining: TimeInterval
     var isOver: Bool
     var didWin: Bool
@@ -86,6 +85,10 @@ nonisolated struct GameSnapshot: Codable, Equatable {
     /// so every chef sees the same bowl contents.
     var deposited: [String: [String]] = [:]
 
+    /// The drawer's four shelves, in slot order (0/1 cold, 2/3 room temp).
+    /// nil means the shelf is empty. Host-owned, like the bowls.
+    var drawer: [DrawerItem?] = Array(repeating: nil, count: Drawer.slotCount)
+
     /// Convenience for the scene: who holds this station, if anyone.
     func holder(of station: StationID) -> String? {
         occupancy[station.rawValue]
@@ -96,7 +99,7 @@ nonisolated struct GameSnapshot: Codable, Equatable {
         deposited[station.rawValue] ?? []
     }
 
-    static let empty = GameSnapshot(completed: [], mess: 0,
+    static let empty = GameSnapshot(completed: [],
                                     timeRemaining: Recipe.timeLimit,
                                     isOver: false, didWin: false, chefs: [],
                                     occupancy: [:])
@@ -146,6 +149,12 @@ nonisolated enum NetMessage: Codable {
     case requestUtensil(id: String, returning: String?)
     /// "I'm dropping this ingredient into the station in front of me."
     case deposit(station: String, foodID: String)
+    /// "Put what I'm holding on this drawer shelf." The host checks the shelf is
+    /// free and the temperature is right; the chef keeps the item until it says
+    /// yes, so a refusal can never eat an ingredient.
+    case requestStoreDrawer(slot: Int, item: DrawerItem)
+    /// "Give me what's on this drawer shelf."
+    case requestTakeDrawer(slot: Int)
 
     // host -> guest
     case queued(position: Int)
@@ -153,6 +162,14 @@ nonisolated enum NetMessage: Codable {
     case utensilGranted(id: String)
     /// The shelf was empty — someone else has the last one.
     case utensilOut(id: String)
+    /// The item is on the shelf now — the chef may empty their hand.
+    case drawerStored(slot: Int)
+    /// The shelf refused it: already occupied, or the wrong temperature. The
+    /// chef keeps holding what they had.
+    case drawerRefused(slot: Int, reason: String)
+    /// The shelf's contents, now in the chef's hand. nil means someone emptied
+    /// it first.
+    case drawerTaken(slot: Int, item: DrawerItem?)
     /// The claim succeeded — open the station screen.
     case stationGranted(station: String)
     /// Someone got there first. The holder's ID is enough — the guest already

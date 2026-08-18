@@ -22,8 +22,10 @@ struct ContentView: View {
 
     // Storage pantry overlay + the shared inventory it fills (Kitchen map only).
     @State private var showStorage = false
+    @State private var showDrawer = false
     @StateObject private var inventory = PlayerInventory()
     @StateObject private var pantry = StoragePantry()
+    @StateObject private var drawerBox = DrawerBox()
 
     var body: some View {
         GeometryReader { geometry in
@@ -66,6 +68,14 @@ struct ContentView: View {
                     if showStorage {
                         StorageView(inventory: inventory, pantry: pantry, onClose: {
                             withAnimation(.easeInOut(duration: 0.2)) { showStorage = false }
+                        })
+                        .transition(.opacity)
+                    }
+
+                    // Drawer shelves, opened from the drawer station.
+                    if showDrawer {
+                        DrawerView(inventory: inventory, box: drawerBox, onClose: {
+                            withAnimation(.easeInOut(duration: 0.2)) { showDrawer = false }
                         })
                         .transition(.opacity)
                     }
@@ -147,6 +157,9 @@ struct ContentView: View {
                         scene.inventory = inventory
                         scene.onOpenStorage = {
                             withAnimation(.easeInOut(duration: 0.2)) { showStorage = true }
+                        }
+                        scene.onOpenDrawer = {
+                            withAnimation(.easeInOut(duration: 0.2)) { showDrawer = true }
                         }
                         activeScene = scene
                     }

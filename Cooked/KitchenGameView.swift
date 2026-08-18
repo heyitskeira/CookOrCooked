@@ -21,7 +21,10 @@ struct KitchenGameView: View {
     @StateObject private var inventory = PlayerInventory()
     // Utensil stock. Local for now; host-owned in multiplayer (see netcode spec).
     @StateObject private var pantry = StoragePantry()
+    // Drawer shelves. Local fallback only; host-owned once a game is running.
+    @StateObject private var drawerBox = DrawerBox()
     @State private var showStorage = false
+    @State private var showDrawer = false
 
     var body: some View {
         GeometryReader { geo in
@@ -47,6 +50,13 @@ struct KitchenGameView: View {
                     .transition(.opacity)
                 }
 
+                if showDrawer {
+                    DrawerView(inventory: inventory, box: drawerBox, session: session, onClose: {
+                        withAnimation(.easeInOut(duration: 0.2)) { showDrawer = false }
+                    })
+                    .transition(.opacity)
+                }
+
                 if session.phase == .hostLeft {
                     hostLeftBanner
                 } else if let player = session.localPlayer, !player.isConnected {
@@ -65,6 +75,9 @@ struct KitchenGameView: View {
         made.inventory = inventory
         made.onOpenStorage = {
             withAnimation(.easeInOut(duration: 0.2)) { showStorage = true }
+        }
+        made.onOpenDrawer = {
+            withAnimation(.easeInOut(duration: 0.2)) { showDrawer = true }
         }
         scene = made
     }

@@ -20,11 +20,27 @@ final class KitchenScene: SKScene {
     /// chef's movement (predicted locally so it stays smooth between packets).
     weak var session: KitchenSession?
 
-    // Added (additive, non-networked for now):
+    // Added (additive):
     /// The local chef's hands. Gating reads this to require the right utensil.
     var inventory: PlayerInventory?
     /// Called when the chef reaches storage — ContentView opens the pantry.
     var onOpenStorage: (() -> Void)?
+    /// Ingredients deposited per station when playing offline (no session). In a
+    /// networked game the host owns this via the snapshot instead.
+    private var localDeposited: [StationID: Set<String>] = [:]
+
+    /// What's been dropped at a station — from the snapshot if networked, else
+    /// the local store.
+    private func depositedFoods(at station: StationID) -> Set<String> {
+        if let session { return Set(session.snapshot.depositedFoods(at: station)) }
+        return localDeposited[station] ?? []
+    }
+
+    /// Drop an ingredient at a station (host-authoritative when networked).
+    private func deposit(_ foodID: String, at station: StationID) {
+        if let session { session.deposit(foodID, at: station) }
+        else { localDeposited[station, default: []].insert(foodID) }
+    }
 
     private let state = GameState()
 
@@ -312,6 +328,25 @@ final class KitchenScene: SKScene {
             return
         }
 
+        // Deposit: if the chef is holding a raw ingredient this action still
+        // needs, drop it here and stop. (Host-authoritative in a networked game.)
+        let need = GatingBridge.requiredIngredients(for: action)
+        let have = depositedFoods(at: station)
+        if let ing = inventory?.ingredient, need.contains(ing.id), !have.contains(ing.id) {
+            deposit(ing.id, at: station)
+            inventory?.dropIngredient()
+            showToast("Dropped \(ing.name)")
+            refreshStations()
+            return
+        }
+
+        // Gate: every required ingredient must be deposited first.
+        let missing = need.subtracting(have)
+        if !missing.isEmpty {
+            showToast("Need: " + missing.map { $0.capitalized }.sorted().joined(separator: ", "))
+            return
+        }
+
         // Gating seam: also require the correct utensil in hand before opening
         // (or queueing for) the station.
         if let block = GatingBridge.blockReason(for: action, holding: inventory) {
@@ -415,6 +450,8 @@ final class KitchenScene: SKScene {
                 session.reportCompletion(actionID: action.id)
             } else {
                 self.state.complete(action)
+                // Offline: the deposited ingredients are consumed by the action.
+                self.localDeposited[action.station] = nil
             }
 
             self.closeStation()

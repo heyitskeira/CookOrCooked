@@ -11,8 +11,11 @@ import SwiftUI
 struct StorageView: View {
     /// The chef's hands — picking here fills these slots.
     @ObservedObject var inventory: PlayerInventory
-    /// Shared stock of utensils (limited). Local for now; host-owned later.
+    /// Local utensil stock, used only when there's no networked game (test menu).
     @ObservedObject var pantry: StoragePantry
+    /// The live game. When present, utensil stock is host-authoritative and
+    /// draws go through it; nil means offline/test-menu (use `pantry`).
+    var session: KitchenSession? = nil
     /// Called when the chef leaves storage (closes the overlay).
     var onClose: () -> Void
 
@@ -26,6 +29,12 @@ struct StorageView: View {
     @State private var ingredientDraw: IngredientDraw? = nil   // result popup
     @State private var takenUtensil: Utensil? = nil            // result popup
     @State private var outOfStock: String? = nil               // result popup
+    @State private var pendingUtensil: Utensil? = nil          // awaiting host reply
+
+    // Stock shown per utensil — from the host if networked, else local.
+    private func utensilsLeft(_ id: String) -> Int {
+        session?.utensilsLeft(id) ?? pantry.remaining(id)
+    }
 
     var body: some View {
         ZStack {
@@ -41,6 +50,39 @@ struct StorageView: View {
         }
         .ignoresSafeArea()
         .overlay { resultPopup }
+        // Host replies synchronously; a guest's reply lands here a moment later.
+        .onChange(of: session?.utensilReply) { _, _ in applyUtensilReply() }
+    }
+
+    private func takeUtensil(_ ut: Utensil) {
+        if let session {
+            // Networked: ask the host, hand back whatever we were holding.
+            pendingUtensil = ut
+            session.requestUtensil(ut.id, returning: inventory.utensil?.id)
+            applyUtensilReply()   // host answers immediately; guest via onChange
+        } else {
+            // Offline (test menu): local stock.
+            guard pantry.take(ut.id) else { outOfStock = ut.name; return }
+            if let displaced = inventory.pickUp(HeldUtensil(id: ut.id, name: ut.name)) {
+                pantry.giveBack(displaced.id)
+            }
+            takenUtensil = ut
+        }
+    }
+
+    private func applyUtensilReply() {
+        guard let session,
+              let reply = session.utensilReply,
+              let ut = pendingUtensil,
+              reply.id == ut.id else { return }
+        if reply.granted {
+            inventory.pickUp(HeldUtensil(id: ut.id, name: ut.name))
+            takenUtensil = ut
+        } else {
+            outOfStock = ut.name
+        }
+        pendingUtensil = nil
+        session.clearUtensilReply()
     }
 
     // MARK: Header (title + back/close)
@@ -95,18 +137,9 @@ struct StorageView: View {
                                                 isRotten: draw.isRotten))
             }
         case .utensils:
-            itemList(Storage.utensils.map { ($0.id, "\($0.name)  ·  \(pantry.remaining($0.id)) left") }) { id in
+            itemList(Storage.utensils.map { ($0.id, "\($0.name)  ·  \(utensilsLeft($0.id)) left") }) { id in
                 guard let ut = Storage.utensils.first(where: { $0.id == id }) else { return }
-                // Limited stock: take one, or report it's out.
-                guard pantry.take(ut.id) else {
-                    outOfStock = ut.name
-                    return
-                }
-                // Swapping tools returns the old one to the shelf.
-                if let displaced = inventory.pickUp(HeldUtensil(id: ut.id, name: ut.name)) {
-                    pantry.giveBack(displaced.id)
-                }
-                takenUtensil = ut
+                takeUtensil(ut)
             }
         }
     }

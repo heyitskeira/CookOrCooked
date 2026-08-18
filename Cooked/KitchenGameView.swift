@@ -41,7 +41,7 @@ struct KitchenGameView: View {
                 }
 
                 if showStorage {
-                    StorageView(inventory: inventory, pantry: pantry, onClose: {
+                    StorageView(inventory: inventory, pantry: pantry, session: session, onClose: {
                         withAnimation(.easeInOut(duration: 0.2)) { showStorage = false }
                     })
                     .transition(.opacity)

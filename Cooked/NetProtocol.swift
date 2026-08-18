@@ -76,9 +76,24 @@ nonisolated struct GameSnapshot: Codable, Equatable {
     /// visibly busy, and that gap is exactly where a double-entry race lives.
     var occupancy: [String: String] = [:]
 
+    /// How many of each utensil are left on the storage shelf. Keyed by
+    /// utensil id. Host-owned; guests read it to show "N left" and grey out
+    /// what's gone.
+    var utensilStock: [String: Int] = [:]
+
+    /// Ingredients accumulated at each station, waiting for an action. Keys are
+    /// `StationID.rawValue`, values are `foodID`s deposited so far. Host-owned
+    /// so every chef sees the same bowl contents.
+    var deposited: [String: [String]] = [:]
+
     /// Convenience for the scene: who holds this station, if anyone.
     func holder(of station: StationID) -> String? {
         occupancy[station.rawValue]
+    }
+
+    /// What's been dropped into this station so far.
+    func depositedFoods(at station: StationID) -> [String] {
+        deposited[station.rawValue] ?? []
     }
 
     static let empty = GameSnapshot(completed: [], mess: 0,
@@ -125,9 +140,19 @@ nonisolated enum NetMessage: Codable {
     /// The host also releases on disconnect, so a dropped guest can't padlock
     /// a station the rest of the kitchen still needs.
     case releaseStation(station: String)
+    /// "Give me this utensil off the shelf." `returning` is the tool the chef
+    /// was already holding (goes back on the shelf), or nil. Only the host may
+    /// touch the counts, so two guests grabbing the last knife resolve cleanly.
+    case requestUtensil(id: String, returning: String?)
+    /// "I'm dropping this ingredient into the station in front of me."
+    case deposit(station: String, foodID: String)
 
     // host -> guest
     case queued(position: Int)
+    /// The utensil was in stock and is now the guest's.
+    case utensilGranted(id: String)
+    /// The shelf was empty — someone else has the last one.
+    case utensilOut(id: String)
     /// The claim succeeded — open the station screen.
     case stationGranted(station: String)
     /// Someone got there first. The holder's ID is enough — the guest already

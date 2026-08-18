@@ -60,6 +60,15 @@ final class KitchenSession: ObservableObject {
     /// nil means either not at a station, or still queueing for one.
     @Published private(set) var heldStation: StationID?
 
+    /// The host's answer to this device's most recent utensil request. Storage
+    /// observes it to fill the hand (granted) or show "out" (denied).
+    @Published private(set) var utensilReply: UtensilReply?
+
+    struct UtensilReply: Equatable {
+        let id: String
+        let granted: Bool
+    }
+
     let role: Role
     let localPlayerID: String
 
@@ -99,6 +108,11 @@ final class KitchenSession: ObservableObject {
     /// station rawValue -> player ID. The authoritative lock table; guests only
     /// ever see the copy inside the snapshot.
     private var occupancy: [String: String] = [:]
+    /// utensil id -> count left on the shelf. Authoritative; rides the snapshot.
+    private var utensilStock: [String: Int] = StoragePantry.defaultUtensilStock
+    /// station rawValue -> [foodID] dropped in so far. Authoritative; cleared
+    /// when the station's action completes.
+    private var deposited: [String: [String]] = [:]
     private var chefs: [String: ChefSnapshot] = [:]
     private var peerToPlayer: [PeerID: String] = [:]
     private var playerToPeer: [String: PeerID] = [:]
@@ -346,6 +360,59 @@ final class KitchenSession: ObservableObject {
         }
     }
 
+    // MARK: Storage + deposit
+    //
+    // Same shape as station claims: the host owns the counts and the bowls, so
+    // guests send intent and read the answer off the snapshot (stock, deposits)
+    // or a direct reply (utensil grant/out).
+
+    /// Take a utensil off the shelf. `returning` is the tool the chef was
+    /// already holding, so it goes back. Offline/host resolves immediately.
+    func requestUtensil(_ id: String, returning: String?) {
+        if isHost || phase != .playing {
+            grantUtensil(id: id, returning: returning, to: nil)
+        } else if let hostPeer {
+            transport.send(.requestUtensil(id: id, returning: returning), to: hostPeer)
+        }
+    }
+
+    /// Drop the held ingredient into the station the chef is standing at.
+    func deposit(_ foodID: String, at station: StationID) {
+        if isHost || phase != .playing {
+            depositFood(foodID, at: station.rawValue)
+        } else if let hostPeer {
+            transport.send(.deposit(station: station.rawValue, foodID: foodID), to: hostPeer)
+        }
+    }
+
+    /// Consumed by StorageView once it has acted on a grant/out reply.
+    func clearUtensilReply() { utensilReply = nil }
+
+    /// Host-authoritative utensil hand-out. `peer == nil` means the host itself
+    /// asked, so the answer is published locally instead of sent.
+    private func grantUtensil(id: String, returning: String?, to peer: PeerID?) {
+        if (utensilStock[id] ?? 0) > 0 {
+            utensilStock[id, default: 0] -= 1
+            if let returning { utensilStock[returning, default: 0] += 1 }
+            if let peer { transport.send(.utensilGranted(id: id), to: peer) }
+            else { utensilReply = UtensilReply(id: id, granted: true) }
+        } else {
+            if let peer { transport.send(.utensilOut(id: id), to: peer) }
+            else { utensilReply = UtensilReply(id: id, granted: false) }
+        }
+    }
+
+    /// Host-authoritative deposit. Ignores a duplicate of something already in.
+    private func depositFood(_ foodID: String, at station: String) {
+        if deposited[station]?.contains(foodID) == true { return }
+        deposited[station, default: []].append(foodID)
+    }
+
+    /// Read helpers so views/scene don't need to know host vs guest.
+    func utensilsLeft(_ id: String) -> Int {
+        isHost ? (utensilStock[id] ?? 0) : (snapshot.utensilStock[id] ?? 0)
+    }
+
     /// Re-sends a claim that was refused earlier, but only once the station is
     /// actually free — otherwise this would turn into a request flood.
     private func retryPendingClaim() {
@@ -427,13 +494,15 @@ final class KitchenSession: ObservableObject {
         // "did it free up yet?" pass the guests get when a snapshot lands.
         retryPendingClaim()
 
-        let shot = GameSnapshot(completed: Array(game.completed),
+        var shot = GameSnapshot(completed: Array(game.completed),
                                 mess: game.mess,
                                 timeRemaining: game.timeRemaining,
                                 isOver: game.isOver,
                                 didWin: game.didWin,
                                 chefs: players.compactMap { chefs[$0.id] },
                                 occupancy: occupancy)
+        shot.utensilStock = utensilStock
+        shot.deposited = deposited
         snapshot = shot
         transport.broadcast(.snapshot(shot))
         if game.isOver {
@@ -496,6 +565,8 @@ final class KitchenSession: ObservableObject {
         case .finishedAction(let id):
             guard isHost, let action = Recipe.action(id) else { return }
             game.complete(action)
+            // The ingredients that were dropped in are consumed by the action.
+            deposited[action.station.rawValue] = nil
             // Free the station immediately rather than waiting for the guest's
             // own release to arrive — a completed action always ends the visit,
             // and a packet lost here would lock the station forever.
@@ -511,6 +582,14 @@ final class KitchenSession: ObservableObject {
         case .releaseStation(let station):
             guard isHost, let id = peerToPlayer[peer] else { return }
             if occupancy[station] == id { occupancy.removeValue(forKey: station) }
+
+        case .requestUtensil(let id, let returning):
+            guard isHost else { return }
+            grantUtensil(id: id, returning: returning, to: peer)
+
+        case .deposit(let station, let foodID):
+            guard isHost else { return }
+            depositFood(foodID, at: station)
 
         // ---- guest side ----
 
@@ -557,6 +636,14 @@ final class KitchenSession: ObservableObject {
             // now instead of up to a snapshot later. The next snapshot
             // overwrites this anyway, so a wrong guess self-corrects.
             snapshot.occupancy[station] = holderID
+
+        case .utensilGranted(let id):
+            guard !isHost else { return }
+            utensilReply = UtensilReply(id: id, granted: true)
+
+        case .utensilOut(let id):
+            guard !isHost else { return }
+            utensilReply = UtensilReply(id: id, granted: false)
 
         case .snapshot(let shot):
             guard !isHost else { return }

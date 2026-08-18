@@ -40,4 +40,21 @@ enum GatingBridge {
         if inventory?.utensil?.id == needed.rawValue { return nil }
         return "Need a \(needed.displayName) in hand"
     }
+
+    /// Raw ingredients (from storage) that must be deposited at the station for
+    /// this action. Intermediate products (chopped strawberries, dough, …) stay
+    /// handled by the action's `requires` chain, so only raws are listed here.
+    /// Ids match `HeldIngredient.id` / `foodID`.
+    static func requiredIngredients(for action: CookAction) -> Set<String> {
+        switch action.id {
+        case 1: return ["strawberries"]      // chop
+        case 2: return ["sugar"]             // macerate (chopped via requires)
+        case 3: return ["flour"]             // sift
+        case 4: return ["butter"]            // melt
+        case 5: return ["egg"]               // beat
+        case 6: return ["sugar", "cream"]    // dough (sifted/melted/beaten via requires)
+        case 7: return ["cream", "sugar"]    // whip
+        default: return []                   // preheat/bake/assemble/serve/trash
+        }
+    }
 }

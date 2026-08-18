@@ -68,9 +68,23 @@ nonisolated struct GameSnapshot: Codable, Equatable {
     var didWin: Bool
     var chefs: [ChefSnapshot]
 
+    /// Who is heads-down at which station. Keys are `StationID.rawValue`,
+    /// values are player IDs. A station in this map is closed to everyone else.
+    ///
+    /// This is derived state — the host could recompute it from `chefs` — but
+    /// it is sent explicitly because the host grants it *before* the guest is
+    /// visibly busy, and that gap is exactly where a double-entry race lives.
+    var occupancy: [String: String] = [:]
+
+    /// Convenience for the scene: who holds this station, if anyone.
+    func holder(of station: StationID) -> String? {
+        occupancy[station.rawValue]
+    }
+
     static let empty = GameSnapshot(completed: [], mess: 0,
                                     timeRemaining: Recipe.timeLimit,
-                                    isOver: false, didWin: false, chefs: [])
+                                    isOver: false, didWin: false, chefs: [],
+                                    occupancy: [:])
 }
 
 // MARK: - Why a join failed
@@ -103,9 +117,22 @@ nonisolated enum NetMessage: Codable {
     case rangingToken(Data)
     case moveTo(x: Double, y: Double, station: String?, isBusy: Bool)
     case finishedAction(id: Int)
+    /// "I've arrived at this station and want to start work." The host is the
+    /// only one allowed to answer, which is what makes two guests arriving in
+    /// the same frame resolve deterministically instead of both walking in.
+    case claimStation(station: String)
+    /// Sent on leaving a station — finished, backed out, or the game ended.
+    /// The host also releases on disconnect, so a dropped guest can't padlock
+    /// a station the rest of the kitchen still needs.
+    case releaseStation(station: String)
 
     // host -> guest
     case queued(position: Int)
+    /// The claim succeeded — open the station screen.
+    case stationGranted(station: String)
+    /// Someone got there first. The holder's ID is enough — the guest already
+    /// has the roster, so it can find the name and the colour itself.
+    case stationDenied(station: String, holderID: String)
     case rangingRequest
     case joinAccepted(player: Player)
     case joinRejected(reason: JoinRejection)

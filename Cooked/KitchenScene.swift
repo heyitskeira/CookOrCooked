@@ -32,6 +32,11 @@ final class KitchenScene: SKScene {
     private var remoteChefs: [String: SKShapeNode] = [:]
     private var stationNodes: [StationID: SKShapeNode] = [:]
     private var stationPoints: [StationID: CGPoint] = [:]
+    /// "Aya is here" caption under an occupied station. Hidden when free.
+    private var stationOwnerLabels: [StationID: SKLabelNode] = [:]
+    /// Last appearance rendered per station, so the per-frame refresh can skip
+    /// stations that haven't changed. See `refreshStations`.
+    private var stationLooks: [StationID: String] = [:]
     private var checklistLabels: [Int: SKLabelNode] = [:]
 
     private let hudTime = SKLabelNode(fontNamed: "AvenirNext-DemiBold")
@@ -47,6 +52,13 @@ final class KitchenScene: SKScene {
     private var chefStation: StationID?
     private var isWalking = false
     private var lastUpdate: TimeInterval = 0
+
+    /// The station this chef has walked to and is queueing for. Set on arrival,
+    /// cleared once the host grants it or the chef walks off. While it is set
+    /// the chef simply stands at the counter waiting their turn.
+    private var waitingStation: StationID?
+    /// Stops the "someone's using this" toast re-firing every frame.
+    private var lastWaitToastFor: StationID?
 
     private let ink = SKColor(white: 0.12, alpha: 1)
     private let paper = SKColor(red: 0.96, green: 0.95, blue: 0.92, alpha: 1)
@@ -88,6 +100,17 @@ final class KitchenScene: SKScene {
             label.verticalAlignmentMode = .center
             label.position = .zero
             node.addChild(label)
+
+            // Sits just under the box so it never collides with the station
+            // name. Only visible while someone is working here.
+            let owner = SKLabelNode(fontNamed: "AvenirNext-DemiBold")
+            owner.fontSize = 10
+            owner.verticalAlignmentMode = .center
+            owner.position = CGPoint(x: 0, y: -36)
+            owner.zPosition = 2
+            owner.isHidden = true
+            node.addChild(owner)
+            stationOwnerLabels[id] = owner
         }
     }
 
@@ -101,9 +124,21 @@ final class KitchenScene: SKScene {
         addChild(chef)
     }
 
+    /// Built once. `refreshStations` runs every frame, and allocating a colour
+    /// per station per frame is pure garbage for the collector to chase.
+    private static let palette: [SKColor] = PlayerPalette.rgb.map {
+        SKColor(red: $0.r, green: $0.g, blue: $0.b, alpha: 1)
+    }
+    private static let paletteFills: [SKColor] = palette.map {
+        $0.withAlphaComponent(0.22)
+    }
+
     private static func colour(_ index: Int) -> SKColor {
-        let c = PlayerPalette.components(index)
-        return SKColor(red: c.r, green: c.g, blue: c.b, alpha: 1)
+        palette[((index % palette.count) + palette.count) % palette.count]
+    }
+
+    private static func fill(_ index: Int) -> SKColor {
+        paletteFills[((index % paletteFills.count) + paletteFills.count) % paletteFills.count]
     }
 
     // MARK: Remote chefs
@@ -114,7 +149,7 @@ final class KitchenScene: SKScene {
 
     private func syncRemoteChefs(_ session: KitchenSession) {
         let others = session.snapshot.chefs.filter { $0.playerID != session.localPlayerID }
-        let living = Set(others.map(\.playerID))
+        let living = Set(others.map(\ChefSnapshot.playerID))
 
         for (id, node) in remoteChefs where !living.contains(id) {
             node.removeFromParent()
@@ -238,6 +273,13 @@ final class KitchenScene: SKScene {
 
     private func walk(to station: StationID) {
         guard let destination = stationPoints[station] else { return }
+
+        // Leaving is what frees a station for everyone else, including leaving
+        // a queue we never got to the front of.
+        session?.releaseStation()
+        waitingStation = nil
+        lastWaitToastFor = nil
+
         isWalking = true
         chefStation = nil
 
@@ -264,16 +306,74 @@ final class KitchenScene: SKScene {
             return
         }
 
-        if let action = state.availableAction(at: station) {
-            // Gating seam: the team's system only checks prior actions; here we
-            // also require the correct utensil in hand before the minigame runs.
-            if let block = GatingBridge.blockReason(for: action, holding: inventory) {
-                showToast(block)
-                return
-            }
-            openStation(action)
-        } else {
+        // The recipe itself says no — nothing to queue for.
+        guard let action = state.availableAction(at: station) else {
             showToast(state.blockReason(at: station))
+            return
+        }
+
+        // Gating seam: also require the correct utensil in hand before opening
+        // (or queueing for) the station.
+        if let block = GatingBridge.blockReason(for: action, holding: inventory) {
+            showToast(block)
+            return
+        }
+
+        // Offline: nobody to share the kitchen with.
+        guard let session else {
+            openStation(action)
+            return
+        }
+
+        // Networked: ask the host for the station and stand here until it says
+        // yes. `resolveWaiting` opens the screen when the answer arrives, which
+        // may be immediately or may be after the current occupant walks off.
+        waitingStation = station
+        lastWaitToastFor = nil
+        session.claimStation(station)
+    }
+
+    /// Runs every frame while queueing. Handles the three things that can
+    /// happen after a claim: it's granted, it's still busy, or the action gets
+    /// finished by the very person we were waiting for.
+    private func resolveWaiting(_ session: KitchenSession) {
+        // The host can take a lock back — a disconnect, or the game ending.
+        // If it does, the screen must not stay open over a stale kitchen.
+        if stationOverlay != nil, let open = chefStation, session.heldStation != open {
+            closeStation()
+            return
+        }
+        guard stationOverlay == nil, let waiting = waitingStation else { return }
+
+        // Whoever was in there may have completed the very action we queued
+        // for, in which case there is nothing left to wait around for.
+        guard state.availableAction(at: waiting) != nil else {
+            waitingStation = nil
+            lastWaitToastFor = nil
+            session.releaseStation()
+            showToast(state.blockReason(at: waiting))
+            return
+        }
+
+        // The session can drop a claim behind our back — a host blip, or a
+        // grant that arrived after we'd already walked elsewhere. If we're
+        // still standing here expecting a turn, ask again; otherwise this chef
+        // waits at the counter for the rest of the game.
+        if session.heldStation != waiting, !session.isQueueingForStation {
+            session.claimStation(waiting)
+            return
+        }
+
+        if session.heldStation == waiting, let action = state.availableAction(at: waiting) {
+            waitingStation = nil
+            lastWaitToastFor = nil
+            openStation(action)
+        } else if let occupant = session.occupant(of: waiting),
+                  occupant.id != session.localPlayerID,
+                  lastWaitToastFor != waiting {
+            // Toast once per wait, not once per frame.
+            lastWaitToastFor = waiting
+            showToast("\(occupant.name) is using the \(waiting.displayName) — waiting…")
         }
     }
 
@@ -291,7 +391,7 @@ final class KitchenScene: SKScene {
         case .sift:
             return SiftOverlay(screenSize: size, actionName: action.name)
         case .melt:
-            return MeltOverlay(screenSize: size, actionName: action.name)
+            return BlowMeltOverlay(screenSize: size, actionName: action.name)
         case .breakEgg:
             return EggOverlay(screenSize: size, actionName: action.name)
         case .hold:
@@ -334,6 +434,12 @@ final class KitchenScene: SKScene {
         stationOverlay = nil
         activeAction = nil
 
+        // Hand the station back the moment the screen closes, whether the
+        // action finished or the game ended underneath it.
+        session?.releaseStation()
+        waitingStation = nil
+        lastWaitToastFor = nil
+
         setHUDHidden(false)
         refreshStations()
     }
@@ -358,6 +464,7 @@ final class KitchenScene: SKScene {
             // else, then tell the host where we are.
             state.apply(session.snapshot)
             syncRemoteChefs(session)
+            resolveWaiting(session)
             session.reportPosition(x: Double(chef.position.x / size.width),
                                    y: Double(chef.position.y / size.height),
                                    station: chefStation?.rawValue,
@@ -403,13 +510,41 @@ final class KitchenScene: SKScene {
     }
 
     /// Green outline = something is doable here right now.
+    /// Filled in a player's colour = that player is in there and it's closed.
+    ///
+    /// This runs every frame in a networked game, so each station's appearance
+    /// is reduced to a short key and nothing is touched unless the key changed.
+    /// Re-assigning `SKLabelNode.text` rebuilds its texture, which at 60fps
+    /// across eight stations is a real cost for no visible difference.
     private func refreshStations() {
         for (id, node) in stationNodes {
+            let owner = session?.occupant(of: id)
             let ready = id == .storage || state.availableAction(at: id) != nil
-            node.strokeColor = ready
-                ? SKColor(red: 0.15, green: 0.55, blue: 0.30, alpha: 1)
-                : SKColor(white: 0.72, alpha: 1)
-            node.lineWidth = ready ? 2.5 : 1.5
+            let key = owner.map { "busy:\($0.id):\($0.colorIndex)" } ?? "free:\(ready)"
+            if stationLooks[id] == key { continue }
+            stationLooks[id] = key
+
+            let label = stationOwnerLabels[id]
+
+            // Occupancy wins over availability: a station can be perfectly
+            // ready and still be someone else's until they walk out.
+            if let owner {
+                node.strokeColor = Self.colour(owner.colorIndex)
+                node.lineWidth = 3
+                node.fillColor = Self.fill(owner.colorIndex)
+                label?.isHidden = false
+                label?.fontColor = Self.colour(owner.colorIndex)
+                label?.text = owner.id == session?.localPlayerID
+                    ? "you're here"
+                    : "\(owner.name) is here"
+            } else {
+                node.fillColor = .clear
+                node.strokeColor = ready
+                    ? SKColor(red: 0.15, green: 0.55, blue: 0.30, alpha: 1)
+                    : SKColor(white: 0.72, alpha: 1)
+                node.lineWidth = ready ? 2.5 : 1.5
+                label?.isHidden = true
+            }
         }
     }
 
@@ -462,11 +597,14 @@ final class KitchenScene: SKScene {
         closeStation()
 
         chefStation = nil
+        waitingStation = nil
+        lastWaitToastFor = nil
         isWalking = false
         chef.removeAllActions()
         chef.position = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
 
         state.reset()
+        stationLooks.removeAll()   // force a full redraw past the change check
         refreshStations()
     }
 }

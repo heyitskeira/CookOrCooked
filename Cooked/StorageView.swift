@@ -11,6 +11,8 @@ import SwiftUI
 struct StorageView: View {
     /// The chef's hands — picking here fills these slots.
     @ObservedObject var inventory: PlayerInventory
+    /// Shared stock of utensils (limited). Local for now; host-owned later.
+    @ObservedObject var pantry: StoragePantry
     /// Called when the chef leaves storage (closes the overlay).
     var onClose: () -> Void
 
@@ -23,6 +25,7 @@ struct StorageView: View {
     @State private var screen: Screen = .menu
     @State private var ingredientDraw: IngredientDraw? = nil   // result popup
     @State private var takenUtensil: Utensil? = nil            // result popup
+    @State private var outOfStock: String? = nil               // result popup
 
     var body: some View {
         ZStack {
@@ -92,10 +95,18 @@ struct StorageView: View {
                                                 isRotten: draw.isRotten))
             }
         case .utensils:
-            itemList(Storage.utensils.map { ($0.id, $0.name) }) { id in
+            itemList(Storage.utensils.map { ($0.id, "\($0.name)  ·  \(pantry.remaining($0.id)) left") }) { id in
                 guard let ut = Storage.utensils.first(where: { $0.id == id }) else { return }
+                // Limited stock: take one, or report it's out.
+                guard pantry.take(ut.id) else {
+                    outOfStock = ut.name
+                    return
+                }
+                // Swapping tools returns the old one to the shelf.
+                if let displaced = inventory.pickUp(HeldUtensil(id: ut.id, name: ut.name)) {
+                    pantry.giveBack(displaced.id)
+                }
                 takenUtensil = ut
-                inventory.pickUp(HeldUtensil(id: ut.id, name: ut.name))
             }
         }
     }
@@ -192,6 +203,15 @@ struct StorageView: View {
             ) {
                 takenUtensil = nil
             }
+        } else if let name = outOfStock {
+            popupCard(
+                emoji: "🚫",
+                headline: "No \(name) left",
+                tint: Color(red: 0.5, green: 0.35, blue: 0.15),
+                subtitle: "Someone else has it — wait for it to come back."
+            ) {
+                outOfStock = nil
+            }
         }
     }
 
@@ -237,5 +257,5 @@ struct StorageView: View {
 }
 
 #Preview {
-    StorageView(inventory: PlayerInventory(), onClose: {})
+    StorageView(inventory: PlayerInventory(), pantry: StoragePantry(), onClose: {})
 }

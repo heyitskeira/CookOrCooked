@@ -23,6 +23,7 @@ struct ContentView: View {
     // Storage pantry overlay + the shared inventory it fills (Kitchen map only).
     @State private var showStorage = false
     @StateObject private var inventory = PlayerInventory()
+    @StateObject private var pantry = StoragePantry()
 
     var body: some View {
         GeometryReader { geometry in
@@ -63,7 +64,7 @@ struct ContentView: View {
 
                     // Storage pantry, opened from the storage station.
                     if showStorage {
-                        StorageView(inventory: inventory, onClose: {
+                        StorageView(inventory: inventory, pantry: pantry, onClose: {
                             withAnimation(.easeInOut(duration: 0.2)) { showStorage = false }
                         })
                         .transition(.opacity)

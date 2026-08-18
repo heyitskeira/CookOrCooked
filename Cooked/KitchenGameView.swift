@@ -19,6 +19,8 @@ struct KitchenGameView: View {
 
     // This device's hands (local, not networked — each player owns their own).
     @StateObject private var inventory = PlayerInventory()
+    // Utensil stock. Local for now; host-owned in multiplayer (see netcode spec).
+    @StateObject private var pantry = StoragePantry()
     @State private var showStorage = false
 
     var body: some View {
@@ -39,7 +41,7 @@ struct KitchenGameView: View {
                 }
 
                 if showStorage {
-                    StorageView(inventory: inventory, onClose: {
+                    StorageView(inventory: inventory, pantry: pantry, onClose: {
                         withAnimation(.easeInOut(duration: 0.2)) { showStorage = false }
                     })
                     .transition(.opacity)

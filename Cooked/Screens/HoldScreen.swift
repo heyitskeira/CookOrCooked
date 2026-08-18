@@ -17,6 +17,7 @@ import SpriteKit
 class HoldOverlay: StationOverlay {
 
     var isTouching = false
+    
 
     override func setUpStation() {
         amountNeeded = 3.0          // seconds of holding

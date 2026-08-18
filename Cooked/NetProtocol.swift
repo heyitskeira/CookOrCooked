@@ -162,6 +162,14 @@ nonisolated enum NetMessage: Codable {
     case joinAccepted(player: Player)
     case joinRejected(reason: JoinRejection)
     case lobby(kitchenName: String, maxPlayers: Int, players: [Player])
+    /// Host picked the head chef — everyone shows the "selecting" screen, then
+    /// reveals this player. Carries the id so all devices agree on who it is.
+    case headChefSelected(id: String)
+    /// The reveal is done; move to the recipe-reading screen.
+    case beginReading
+    /// Head chef tapped "next" on the recipe (guest -> host). The host then
+    /// sends `.start` so every device enters the kitchen together.
+    case doneReading
     case start
     case snapshot(GameSnapshot)
 }

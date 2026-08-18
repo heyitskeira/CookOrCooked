@@ -29,6 +29,10 @@ final class KitchenSession: ObservableObject {
         case searching
         case verifying(String)
         case lobby
+        /// Host has started: everyone watches the "selecting head chef" screen.
+        case selectingHeadChef
+        /// Head chef reads the recipe; everyone else waits.
+        case reading
         case playing
         case rejected(JoinRejection)
         case hostLeft
@@ -68,6 +72,13 @@ final class KitchenSession: ObservableObject {
         let id: String
         let granted: Bool
     }
+
+    /// Who was picked to read the recipe. Set by the host, broadcast to all so
+    /// every device shows the same head chef. Views read it to choose text.
+    @Published private(set) var headChefID: String?
+
+    var isHeadChef: Bool { headChefID != nil && headChefID == localPlayerID }
+    var headChefName: String { headChefID.flatMap { player($0)?.name } ?? "Someone" }
 
     let role: Role
     let localPlayerID: String
@@ -246,8 +257,43 @@ final class KitchenSession: ObservableObject {
         joinTimeout = nil
     }
 
+    /// Host presses Start. Instead of jumping into the kitchen, pick the head
+    /// chef, show the selecting screen, then reveal + read, then play. Every
+    /// step is host-driven so all devices move together.
     func startCooking() {
         guard isHost, canStart else { return }
+        let chosen = players.randomElement()?.id ?? localPlayerID
+        headChefID = chosen
+        phase = .selectingHeadChef
+        transport.broadcast(.headChefSelected(id: chosen))
+
+        // Linger on the reveal for a beat, then move everyone to the recipe.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            self?.beginReading()
+        }
+    }
+
+    /// Host: reveal is over, show the recipe to the head chef.
+    private func beginReading() {
+        guard isHost, phase == .selectingHeadChef else { return }
+        phase = .reading
+        transport.broadcast(.beginReading)
+    }
+
+    /// Head chef finished with the recipe — enter the kitchen. Host does it
+    /// directly; a guest head chef asks the host to.
+    func finishReading() {
+        if isHost {
+            enterKitchen()
+        } else {
+            hostPeer.map { transport.send(.doneReading, to: $0) }
+        }
+    }
+
+    /// Host: leave the head-chef flow and actually start the game.
+    private func enterKitchen() {
+        guard isHost else { return }
         occupancy.removeAll()
         heldStation = nil
         pendingClaim = nil
@@ -591,6 +637,10 @@ final class KitchenSession: ObservableObject {
             guard isHost else { return }
             depositFood(foodID, at: station)
 
+        case .doneReading:
+            guard isHost, phase == .reading else { return }
+            enterKitchen()
+
         // ---- guest side ----
 
         case .queued(let position):
@@ -613,6 +663,15 @@ final class KitchenSession: ObservableObject {
             kitchenName = name
             maxPlayers = max
             players = roster
+
+        case .headChefSelected(let id):
+            guard !isHost else { return }
+            headChefID = id
+            phase = .selectingHeadChef
+
+        case .beginReading:
+            guard !isHost else { return }
+            phase = .reading
 
         case .start:
             guard !isHost else { return }

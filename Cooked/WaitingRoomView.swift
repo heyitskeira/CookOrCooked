@@ -50,11 +50,15 @@ struct WaitingRoomView: View {
         // .playing before this view appears and a change-only handler would
         // strand them in the lobby forever.
         .onChange(of: session.phase, initial: true) { _, phase in
-            if phase == .playing { showKitchen = true }
+            // The whole post-Start sequence (head-chef select → reveal → play)
+            // is owned by HeadChefFlowView, so raise the cover as soon as any of
+            // those phases begins.
+            if phase == .selectingHeadChef || phase == .reading || phase == .playing {
+                showKitchen = true
+            }
         }
         .fullScreenCover(isPresented: $showKitchen) {
-            KitchenGameView(session: session)
-                .ignoresSafeArea()
+            HeadChefFlowView(session: session)
         }
     }
 

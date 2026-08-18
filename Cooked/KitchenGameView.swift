@@ -17,6 +17,10 @@ struct KitchenGameView: View {
 
     @State private var scene: KitchenScene?
 
+    // This device's hands (local, not networked — each player owns their own).
+    @StateObject private var inventory = PlayerInventory()
+    @State private var showStorage = false
+
     var body: some View {
         GeometryReader { geo in
             ZStack {
@@ -25,6 +29,20 @@ struct KitchenGameView: View {
                         .ignoresSafeArea()
                 } else {
                     AppTheme.background
+                }
+
+                // Inventory indicator, pinned bottom-centre over the kitchen.
+                VStack {
+                    Spacer()
+                    InventoryBar(inventory: inventory)
+                        .padding(.bottom, 20)
+                }
+
+                if showStorage {
+                    StorageView(inventory: inventory, onClose: {
+                        withAnimation(.easeInOut(duration: 0.2)) { showStorage = false }
+                    })
+                    .transition(.opacity)
                 }
 
                 if session.phase == .hostLeft {
@@ -42,6 +60,10 @@ struct KitchenGameView: View {
         let made = KitchenScene(size: size)
         made.scaleMode = .resizeFill
         made.session = session
+        made.inventory = inventory
+        made.onOpenStorage = {
+            withAnimation(.easeInOut(duration: 0.2)) { showStorage = true }
+        }
         scene = made
     }
 

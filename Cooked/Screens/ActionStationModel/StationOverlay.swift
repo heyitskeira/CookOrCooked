@@ -28,6 +28,14 @@ class StationOverlay: SKNode {
     // This gets called when the player finishes.
     var whenFinished: (() -> Void)?
 
+    // Whether the callback above has actually run. The finish is announced
+    // after a short pause so the player can see the result in their hands, and
+    // in that pause the scene is free to tear this screen down — the timer runs
+    // out, the host takes the station back. Losing the callback there would
+    // throw away an action the player visibly completed, so the scene can ask
+    // for it early instead.
+    private var didAnnounceFinish = false
+
     // ---- Things the screen shows ----
 
     let background = SKSpriteNode()
@@ -39,6 +47,7 @@ class StationOverlay: SKNode {
     // The prop in the middle: a whisk, a knife, a sieve. Each station
     // moves this its own way.
     let prop = SKSpriteNode()
+
 
     // ---- Things that change while playing ----
 
@@ -218,8 +227,20 @@ class StationOverlay: SKNode {
 
         let wait = SKAction.wait(forDuration: 0.35)
         let callBack = SKAction.run {
-            self.whenFinished?()
+            self.announceFinish()
         }
         run(SKAction.sequence([wait, callBack]))
+    }
+
+    /// Report the finish now rather than at the end of the pause. Safe to call
+    /// as often as you like — only the first one counts.
+    ///
+    /// The scene calls this before removing a screen that has already been
+    /// completed, because once this node leaves the tree its actions stop and
+    /// the callback above would never fire.
+    func announceFinish() {
+        guard isFinished, !didAnnounceFinish else { return }
+        didAnnounceFinish = true
+        whenFinished?()
     }
 }

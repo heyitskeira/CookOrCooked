@@ -72,6 +72,20 @@ struct KitchenGameView: View {
                     .transition(.opacity)
                 }
 
+                // Win/lose result once the game ends. Reads the synced snapshot.
+                if session.snapshot.isOver {
+                    EndGameResultsView(
+                        didWin: session.snapshot.didWin,
+                        timeRemaining: session.snapshot.timeRemaining,
+                        onBackToStart: {
+                            session.leave()
+                            NotificationCenter.default.post(name: .returnToStart, object: nil)
+                        }
+                    )
+                    .transition(.opacity)
+                    .zIndex(2)
+                }
+
                 if session.phase == .hostLeft {
                     hostLeftBanner
                 } else if let player = session.localPlayer, !player.isConnected {

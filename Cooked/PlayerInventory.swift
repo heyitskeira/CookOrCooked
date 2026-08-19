@@ -23,6 +23,10 @@ struct HeldIngredient: Identifiable, Equatable, Codable {
     let id: String        // stable key, e.g. "strawberries"
     let name: String      // display, e.g. "Strawberries"
     var isRotten: Bool = false
+    /// A prep (chopped strawberries, sifted flour, …) rather than a raw
+    /// ingredient. A held prep locks the hand — it can't be swapped for
+    /// anything else until it's dropped/used.
+    var isPrep: Bool = false
 }
 
 /// A utensil a chef is carrying. Utensils never rot.
@@ -54,6 +58,8 @@ final class PlayerInventory: ObservableObject {
     var hasIngredient: Bool { ingredient != nil }
     var hasUtensil: Bool { utensil != nil }
     var isEmpty: Bool { ingredient == nil && utensil == nil }
+    /// The chef is carrying a prep, so the ingredient hand is locked.
+    var isHoldingPrep: Bool { ingredient?.isPrep == true }
 
     /// Does the chef hold this exact ingredient? (used by gating later)
     func holds(ingredientID: String) -> Bool { ingredient?.id == ingredientID }
@@ -61,13 +67,15 @@ final class PlayerInventory: ObservableObject {
     /// Does the chef hold this exact utensil? (used by gating later)
     func holds(utensilID: String) -> Bool { utensil?.id == utensilID }
 
-    // MARK: Pick up (replaces the slot, returns whatever was displaced)
+    // MARK: Pick up
 
+    /// Take an ingredient/prep into the hand. Fails (returns false) when a prep
+    /// is already held — a prep can't be swapped for anything else.
     @discardableResult
-    func pickUp(_ newItem: HeldIngredient) -> HeldIngredient? {
-        let displaced = ingredient
+    func pickUp(_ newItem: HeldIngredient) -> Bool {
+        if isHoldingPrep { return false }
         ingredient = newItem
-        return displaced
+        return true
     }
 
     @discardableResult

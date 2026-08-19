@@ -21,6 +21,8 @@ struct ResultPopupView: View {
     @ObservedObject var inventory: PlayerInventory
     var onDone: () -> Void
 
+    @State private var alert: String?
+
     private var name: String { GatingBridge.displayName(result.foodID) }
 
     var body: some View {
@@ -48,9 +50,13 @@ struct ResultPopupView: View {
 
                 VStack(spacing: 12) {
                     choice(title: "Put in my hands", tint: AppTheme.tomato) {
+                        if inventory.isHoldingPrep {
+                            alert = "You already held on to a prep!"
+                            return
+                        }
                         // It's on the station now — take it into hand and clear it.
                         session.pickUpOutput(at: result.station)
-                        inventory.pickUp(HeldIngredient(id: result.foodID, name: name))
+                        inventory.pickUp(HeldIngredient(id: result.foodID, name: name, isPrep: true))
                         onDone()
                     }
                     choice(title: "Leave on the station", tint: AppTheme.ink) {
@@ -70,6 +76,10 @@ struct ResultPopupView: View {
             )
             .shadow(color: .black.opacity(0.3), radius: 18, y: 10)
             .padding(40)
+
+            if let alert {
+                PrepHeldAlert(message: alert) { self.alert = nil }
+            }
         }
     }
 

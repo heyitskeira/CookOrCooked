@@ -21,6 +21,8 @@ struct StationPopupView: View {
     var onDoAction: (CookAction) -> Void
     var onClose: () -> Void
 
+    @State private var alert: String?
+
     // MARK: Snapshot-derived state
 
     private var completed: Set<Int> { Set(session.snapshot.completed) }
@@ -70,8 +72,12 @@ struct StationPopupView: View {
                 // ---- Preps: pick up what's finished, or drop what you carry ----
                 if let output {
                     prepButton(title: "Pick up \(GatingBridge.displayName(output))", icon: "hand.raised.fill") {
+                        if inventory.isHoldingPrep {
+                            alert = "You already held on to a prep!"
+                            return
+                        }
                         if let food = session.pickUpOutput(at: station) {
-                            inventory.pickUp(HeldIngredient(id: food, name: GatingBridge.displayName(food)))
+                            inventory.pickUp(HeldIngredient(id: food, name: GatingBridge.displayName(food), isPrep: true))
                         }
                         onClose()
                     }
@@ -112,6 +118,10 @@ struct StationPopupView: View {
             )
             .shadow(color: .black.opacity(0.3), radius: 16, y: 8)
             .padding(40)
+
+            if let alert {
+                PrepHeldAlert(message: alert) { self.alert = nil }
+            }
         }
     }
 
@@ -165,6 +175,37 @@ struct StationPopupView: View {
         case .whisk:  return "🥄"
         case .mixer:  return "🌀"
         case .pan:    return "🍳"
+        }
+    }
+}
+
+/// Small centered alert used when a chef tries to take something while already
+/// holding a prep. Shared by the station, result, and storage screens.
+struct PrepHeldAlert: View {
+    let message: String
+    var onDismiss: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.5).ignoresSafeArea()
+                .onTapGesture { onDismiss() }
+            VStack(spacing: 16) {
+                Text("🙌").font(.system(size: 44))
+                Text(message)
+                    .font(.system(size: 20, weight: .heavy, design: .rounded))
+                    .foregroundStyle(AppTheme.ink)
+                    .multilineTextAlignment(.center)
+                Button("OK", action: onDismiss)
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .foregroundStyle(AppTheme.cream)
+                    .frame(width: 140, height: 52)
+                    .background(Capsule().fill(AppTheme.tomato))
+                    .overlay(Capsule().stroke(AppTheme.ink, lineWidth: 3))
+            }
+            .padding(32)
+            .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(AppTheme.cream))
+            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(AppTheme.ink, lineWidth: 4))
+            .padding(50)
         }
     }
 }

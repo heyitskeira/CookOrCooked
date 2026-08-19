@@ -41,20 +41,47 @@ enum GatingBridge {
         return "Need a \(needed.displayName) in hand"
     }
 
-    /// Raw ingredients (from storage) that must be deposited at the station for
-    /// this action. Intermediate products (chopped strawberries, dough, …) stay
-    /// handled by the action's `requires` chain, so only raws are listed here.
-    /// Ids match `HeldIngredient.id` / `foodID`.
+    /// Everything that must be deposited at the station for this action — raw
+    /// ingredients AND prep items now that preps are carryable. Ids match
+    /// `HeldIngredient.id` / `foodID`.
     static func requiredIngredients(for action: CookAction) -> Set<String> {
         switch action.id {
-        case 1: return ["strawberries"]      // chop
-        case 2: return ["sugar"]             // macerate (chopped via requires)
-        case 3: return ["flour"]             // sift
-        case 4: return ["butter"]            // melt
-        case 5: return ["egg"]               // beat
-        case 6: return ["sugar", "cream"]    // dough (sifted/melted/beaten via requires)
-        case 7: return ["cream", "sugar"]    // whip
-        default: return []                   // preheat/bake/assemble/serve/trash
+        case 1:  return ["strawberries"]                                              // chop
+        case 2:  return ["choppedStrawberries", "sugar"]                              // macerate
+        case 3:  return ["flour"]                                                     // sift
+        case 4:  return ["butter"]                                                    // melt
+        case 5:  return ["egg"]                                                       // crack egg
+        case 6:  return ["siftedFlour", "meltedButter", "crackedEgg", "sugar"]        // dough
+        case 7:  return ["cream", "sugar"]                                            // whip
+        case 9:  return ["rawDough"]                                                  // bake (+ hot oven via requires)
+        case 10: return ["bakedBase", "whippedCream", "maceratedStrawberries"]        // assemble
+        case 11: return ["assembledCake"]                                             // decorate
+        case 12: return ["finishedCake"]                                             // serve
+        default: return []                                                            // preheat/trash
+        }
+    }
+
+    /// Display name for any food id — raw ingredients and preps alike. Used by
+    /// the inventory bar, deposit toasts, and the result popup.
+    static func displayName(_ foodID: String) -> String {
+        switch foodID {
+        case "strawberries":         return "Strawberries"
+        case "cream":                return "Cream"
+        case "butter":               return "Butter"
+        case "egg":                  return "Egg"
+        case "flour":                return "Flour"
+        case "sugar":                return "Sugar"
+        case "choppedStrawberries":  return "Chopped strawberries"
+        case "maceratedStrawberries":return "Macerated strawberries"
+        case "siftedFlour":          return "Sifted flour"
+        case "meltedButter":         return "Melted butter"
+        case "crackedEgg":           return "Cracked egg"
+        case "rawDough":             return "Raw dough"
+        case "whippedCream":         return "Whipped cream"
+        case "bakedBase":            return "Baked base"
+        case "assembledCake":        return "Assembled cake"
+        case "finishedCake":         return "Finished cake"
+        default:                     return foodID.capitalized
         }
     }
 }

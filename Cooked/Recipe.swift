@@ -17,13 +17,14 @@ import CoreGraphics
 // member on it — would be main-actor isolated, so touching `rawValue` or
 // `allCases` off the main actor would not compile.
 nonisolated enum StationID: String, CaseIterable {
-    case chopping, bowl1, bowl2, table, stove, ovenServe, storage, trash
-    
+    case chopping, bowl1, bowl2, mixing, table, stove, ovenServe, storage, trash
+
     var displayName: String {
         switch self {
         case .chopping: return "Chopping"
         case .bowl1 : return "Bowl 1"
         case .bowl2 : return "Bowl 2"
+        case .mixing: return "Mixing"
         case .table : return "Table"
         case .stove : return "Stove"
         case .storage : return "Storage"
@@ -31,7 +32,7 @@ nonisolated enum StationID: String, CaseIterable {
         case .ovenServe: return "Oven"
         }
     }
-    
+
     /// Normalised 0...1 position. Multiplied by scene size at setup so the
     /// layout survives any screen size.
     var unitPosition: CGPoint {
@@ -40,6 +41,7 @@ nonisolated enum StationID: String, CaseIterable {
         case .chopping:  return CGPoint(x: 0.32, y: 0.84)
         case .bowl1:     return CGPoint(x: 0.55, y: 0.84)
         case .bowl2:     return CGPoint(x: 0.78, y: 0.84)
+        case .mixing:    return CGPoint(x: 0.68, y: 0.58)
         case .stove:     return CGPoint(x: 0.90, y: 0.56)
         case .ovenServe: return CGPoint(x: 0.85, y: 0.24)
         case .table:     return CGPoint(x: 0.50, y: 0.40)
@@ -66,8 +68,15 @@ nonisolated struct CookAction {
     let name: String
     let station: StationID
     var  motion: ActionMotion = .hold
+    /// Prior actions that must be complete. Now used ONLY for non-item gates
+    /// (the oven must be pre-heated before baking); ingredient order is enforced
+    /// by what's deposited, not by this list.
     let requires: [Int]
     var isRepeatable: Bool = false
+    /// The prep item this action produces (a `foodID`), or nil if it makes no
+    /// carryable item (pre-heat, serve, trash). Producing actions leave this on
+    /// the station until a chef picks it up.
+    var output: String? = nil
 }
 
 // MARK: - Recipe definition
@@ -87,20 +96,23 @@ nonisolated enum Recipe {
     //   - assemble requires the batter to exist (6)
     //   - serve requires decorate (11)
     
+    // Order is now enforced by DEPOSITS (see GatingBridge), not `requires` —
+    // an action fires only when its ingredients/preps are dropped in. `requires`
+    // survives only where the gate isn't an item: bake needs a hot oven (8).
     static let actions: [CookAction] = [
-        CookAction(id: 1,  name: "Cut strawberries",  station: .chopping, motion: .chop,  requires: []),
-        CookAction(id: 2,  name: "Macerate Strawberries", station: .bowl2,     requires: [1]),
-        CookAction(id: 3,  name: "Sift flour", station: .bowl1, motion: .sift,   requires: []),
-        CookAction(id: 4,  name: "Melt Butter", station: .stove, motion: .melt, requires: []),
-        CookAction(id: 5,  name: "Beat Egg", station: .bowl1, motion: .breakEgg,    requires: []),
-        CookAction(id: 6,  name: "Mix all mixture", station: .bowl1, motion: .mix,  requires: [3,4,5]),
-        CookAction(id: 7,  name: "Whip cream", station: .bowl2, motion: .whisk, requires: []),
-        CookAction(id: 8, name: "Pre-heat oven", station: .ovenServe, requires: []),
-        CookAction(id: 9, name: "Bake base", station: .ovenServe,  requires: [6,8]),
-        CookAction(id: 10, name: "Assemble", station: .table, requires: [2, 7, 9]),
-        CookAction(id: 11, name: "Decorate Cake", station: .table, requires: [1, 7, 10]),
-        CookAction(id: 12, name: "Serve the Cake", station: .ovenServe, requires: [11]),
-        CookAction(id: 13, name: "Threw rotten ingredients", station: .trash, requires: [], isRepeatable: true)
+        CookAction(id: 1,  name: "Cut strawberries",      station: .chopping,  motion: .chop,     requires: [],  output: "choppedStrawberries"),
+        CookAction(id: 2,  name: "Macerate Strawberries", station: .bowl2,                        requires: [],  output: "maceratedStrawberries"),
+        CookAction(id: 3,  name: "Sift flour",            station: .bowl1,     motion: .sift,     requires: [],  output: "siftedFlour"),
+        CookAction(id: 4,  name: "Melt Butter",           station: .stove,     motion: .melt,     requires: [],  output: "meltedButter"),
+        CookAction(id: 5,  name: "Crack Egg",             station: .bowl1,     motion: .breakEgg, requires: [],  output: "crackedEgg"),
+        CookAction(id: 6,  name: "Make raw dough",        station: .mixing,    motion: .mix,      requires: [],  output: "rawDough"),
+        CookAction(id: 7,  name: "Whip cream",            station: .bowl2,     motion: .whisk,    requires: [],  output: "whippedCream"),
+        CookAction(id: 8,  name: "Pre-heat oven",         station: .ovenServe,                    requires: []),
+        CookAction(id: 9,  name: "Bake base",             station: .ovenServe,                    requires: [8], output: "bakedBase"),
+        CookAction(id: 10, name: "Assemble",              station: .table,                        requires: [],  output: "assembledCake"),
+        CookAction(id: 11, name: "Decorate Cake",         station: .table,                        requires: [],  output: "finishedCake"),
+        CookAction(id: 12, name: "Serve the Cake",        station: .ovenServe,                    requires: []),
+        CookAction(id: 13, name: "Threw rotten ingredients", station: .trash,                     requires: [],  isRepeatable: true)
     ]
     
     static var goalIDs: [Int] {

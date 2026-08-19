@@ -22,6 +22,10 @@ struct KitchenGameView: View {
     // Utensil stock. Local for now; host-owned in multiplayer (see netcode spec).
     @StateObject private var pantry = StoragePantry()
     @State private var showStorage = false
+    /// True while a station screen is up inside the scene. SwiftUI chrome is
+    /// drawn above the SpriteView, so the scene has to tell us to get out of
+    /// the way — the station screen has its own hands.
+    @State private var headsDown = false
 
     var body: some View {
         GeometryReader { geo in
@@ -34,10 +38,16 @@ struct KitchenGameView: View {
                 }
 
                 // Inventory indicator, pinned bottom-centre over the kitchen.
-                VStack {
-                    Spacer()
-                    InventoryBar(inventory: inventory)
-                        .padding(.bottom, 20)
+                // Gone while heads-down at a station: the station screen shows
+                // the same two slots as a pair of hands, and two versions of
+                // the truth on one screen is one too many.
+                if !headsDown {
+                    VStack {
+                        Spacer()
+                        InventoryBar(inventory: inventory)
+                            .padding(.bottom, 20)
+                    }
+                    .transition(.opacity)
                 }
 
                 if showStorage {
@@ -65,6 +75,9 @@ struct KitchenGameView: View {
         made.inventory = inventory
         made.onOpenStorage = {
             withAnimation(.easeInOut(duration: 0.2)) { showStorage = true }
+        }
+        made.onHeadsDownChanged = { down in
+            withAnimation(.easeInOut(duration: 0.15)) { headsDown = down }
         }
         scene = made
     }

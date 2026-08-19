@@ -25,6 +25,11 @@ final class KitchenScene: SKScene {
     var inventory: PlayerInventory?
     /// Called when the chef reaches storage — ContentView opens the pantry.
     var onOpenStorage: (() -> Void)?
+    /// True while a station screen is up. SwiftUI draws its own chrome on top
+    /// of the SpriteView, and nothing inside the scene can hide it — so the
+    /// inventory bar would sit over the station screen showing the same two
+    /// slots the hands were hidden to get out of the way.
+    var onHeadsDownChanged: ((Bool) -> Void)?
     /// Ingredients deposited per station when playing offline (no session). In a
     /// networked game the host owns this via the snapshot instead.
     private var localDeposited: [StationID: Set<String>] = [:]
@@ -69,6 +74,20 @@ final class KitchenScene: SKScene {
     private var isWalking = false
     private var lastUpdate: TimeInterval = 0
 
+    /// The chef's hands, parked in the bottom corners of the map.
+    private var hands: HandsNode?
+    /// White sheet for the flash between a station screen and the kitchen.
+    private var flash: SKSpriteNode?
+
+    /// What the chef is visibly carrying out of a station.
+    ///
+    /// Visual only — this deliberately does NOT put anything into
+    /// `PlayerInventory`. Preps landing in the inventory for real is Agung's
+    /// job (task 9), and two people writing the same slot is how you get an
+    /// ingredient that exists twice. When that lands, delete this and read
+    /// `inventory.ingredient?.id` instead.
+    private var carriedPrep: String?
+
     /// The station this chef has walked to and is queueing for. Set on arrival,
     /// cleared once the host grants it or the chef walks off. While it is set
     /// the chef simply stands at the counter waiting their turn.
@@ -90,8 +109,76 @@ final class KitchenScene: SKScene {
         buildStations()
         buildChef()
         buildHUD()
+        buildHands()
         if Recipe.showRecipeChecklist { buildChecklist() }
         refreshStations()
+    }
+
+    private func buildHands() {
+        // `didMove` can run more than once for the same scene, and a second set
+        // of hands would be orphaned on screen forever.
+        guard hands == nil else { return }
+
+        let made = HandsNode(screenSize: size)
+        addChild(made)
+        hands = made
+        refreshHands()
+        made.appear()
+
+        // Built once and reused. Allocating a full-screen sprite every time a
+        // station closes would be a hitch at exactly the wrong moment.
+        let sheet = SKSpriteNode(color: .white, size: size)
+        sheet.position = CGPoint(x: size.width / 2, y: size.height / 2)
+        sheet.zPosition = 300
+        sheet.alpha = 0
+        // Hidden rather than transparent: an invisible screen-sized quad still
+        // gets drawn every frame.
+        sheet.isHidden = true
+        addChild(sheet)
+        flash = sheet
+    }
+
+    /// The scene is created at the safe-area size and resized to the view's
+    /// real bounds a moment later, so anything pinned to an edge or sized to
+    /// the screen has to be told.
+    override func didChangeSize(_ oldSize: CGSize) {
+        super.didChangeSize(oldSize)
+        hands?.layout(for: size)
+        flash?.size = size
+        flash?.position = CGPoint(x: size.width / 2, y: size.height / 2)
+    }
+
+    /// Fills the hands from what the chef is actually holding.
+    ///
+    /// `carriedPrep` is the visual stand-in until preps land in the inventory
+    /// for real; the utensil is already true today, so it is read straight from
+    /// the model rather than mirrored.
+    private func refreshHands() {
+        // A real ingredient in the model always wins, and retires the stand-in
+        // for good. Without this the prep would come *back* the moment the
+        // chef put a real ingredient down — showing chopped strawberries that
+        // are actually sitting on the chopping board.
+        if inventory?.ingredient != nil { carriedPrep = nil }
+
+        hands?.setItems(prep: inventory?.ingredient?.id ?? carriedPrep,
+                        utensil: inventory?.utensil?.id)
+    }
+
+    /// A quick white wipe. Covers the swap from the station screen back to the
+    /// kitchen so the two never appear in the same frame.
+    private func flashToKitchen() {
+        guard let flash else { return }
+        flash.removeAllActions()
+        flash.isHidden = false
+        flash.alpha = 0.9
+        flash.run(.sequence([.fadeOut(withDuration: 0.28),
+                             .run { flash.isHidden = true }]))
+    }
+
+    private func cancelFlash() {
+        flash?.removeAllActions()
+        flash?.alpha = 0
+        flash?.isHidden = true
     }
 
     private func buildStations() {
@@ -375,6 +462,10 @@ final class KitchenScene: SKScene {
         // The host can take a lock back — a disconnect, or the game ending.
         // If it does, the screen must not stay open over a stale kitchen.
         if stationOverlay != nil, let open = chefStation, session.heldStation != open {
+            // If they'd already finished the motion, credit it. The reveal beat
+            // is three quarters of a second long and a revoke landing inside it
+            // must not swallow work the player actually did.
+            stationOverlay?.announceFinish()
             closeStation()
             return
         }
@@ -439,6 +530,10 @@ final class KitchenScene: SKScene {
 
         let overlay = makeOverlay(for: action)
 
+        // Whatever was in hand goes into this action. Carrying the last prep
+        // out of a station you just used it at would be a lie.
+        carriedPrep = nil
+
         // When the player finishes the motion, mark the action done and
         // put them back in the kitchen.
         overlay.whenFinished = { [weak self] in
@@ -454,18 +549,32 @@ final class KitchenScene: SKScene {
                 self.localDeposited[action.station] = nil
             }
 
-            self.closeStation()
+            // Walk out holding what you just made. Visual only — see
+            // `carriedPrep`.
+            self.carriedPrep = RecipeBook.carriedResult(forActionID: action.id)
+
+            self.closeStation(rewarding: true)
             self.showToast("\(action.name) — done")
         }
 
         addChild(overlay)
         stationOverlay = overlay
 
-        // Hide the kitchen HUD while heads-down.
+        // Hide the kitchen HUD while heads-down. The map's hands go with it —
+        // the station screen owns its own pair from here.
         setHUDHidden(true)
+        hands?.vanish(animated: false)
+        onHeadsDownChanged?(true)
     }
 
-    private func closeStation() {
+    /// `rewarding` is the difference between walking out having made something
+    /// and being thrown out. Only the first gets the little bounce.
+    private func closeStation(rewarding: Bool = false) {
+        // Only flash when a screen was actually up. `closeStation` is also
+        // called defensively — on restart, on the game ending — and a white
+        // wipe over a kitchen nobody left would look like a bug.
+        let wasOpen = stationOverlay != nil
+
         stationOverlay?.cleanUp()
         stationOverlay?.removeFromParent()
         stationOverlay = nil
@@ -478,7 +587,21 @@ final class KitchenScene: SKScene {
         lastWaitToastFor = nil
 
         setHUDHidden(false)
+        onHeadsDownChanged?(false)
         refreshStations()
+
+        if wasOpen {
+            // Flash first, hands a beat later — they arrive as the white clears
+            // rather than being washed out by it.
+            flashToKitchen()
+            refreshHands()
+            hands?.run(.wait(forDuration: 0.12)) { [weak self] in
+                self?.hands?.appear(bounce: rewarding)
+            }
+        } else {
+            refreshHands()
+            hands?.appear()
+        }
     }
 
     private func setHUDHidden(_ hidden: Bool) {
@@ -516,6 +639,11 @@ final class KitchenScene: SKScene {
         // Drive whichever station screen is open. Without this the minigames
         // never advance.
         stationOverlay?.update(secondsSinceLastFrame: gap)
+
+        // Picking a knife off the shelf has to show up in the hand without the
+        // storage screen having to reach in here. `setItems` diffs internally,
+        // so an unchanged hand costs two optional comparisons a frame.
+        if stationOverlay == nil { refreshHands() }
 
         refreshHUD()
 
@@ -597,11 +725,21 @@ final class KitchenScene: SKScene {
     private func presentEnd() {
         if endOverlay != nil { return }
 
-        // Close any station screen that was still open.
+        // Close any station screen that was still open — but bank a finished
+        // action first. The clock running out during the reveal beat used to
+        // discard the action, which could turn a win into a loss.
+        stationOverlay?.announceFinish()
         closeStation()
 
+        // Nobody is holding anything once the service is over, and no white
+        // wipe over the results card.
+        hands?.vanish()
+        cancelFlash()
+
         let node = SKNode()
-        node.zPosition = 200
+        // Above the flash sheet at 300, or a close-and-end in the same frame
+        // washes the results card white.
+        node.zPosition = 400
 
         let fill = SKSpriteNode(color: SKColor(white: 0.08, alpha: 0.92), size: size)
         fill.position = CGPoint(x: size.width / 2, y: size.height / 2)
@@ -639,6 +777,13 @@ final class KitchenScene: SKScene {
         isWalking = false
         chef.removeAllActions()
         chef.position = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
+
+        carriedPrep = nil
+        inventory?.clear()
+        localDeposited.removeAll()
+        cancelFlash()
+        refreshHands()
+        hands?.appear()
 
         state.reset()
         stationLooks.removeAll()   // force a full redraw past the change check

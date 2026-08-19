@@ -144,6 +144,40 @@ enum RecipeBook {
     static var leftPage: [BookStep] { Array(steps.prefix(pageBreak)) }
     static var rightPage: [BookStep] { Array(steps.dropFirst(pageBreak)) }
 
+    /// The book step behind one of `Recipe.actions`, which is what the kitchen
+    /// scene actually runs.
+    ///
+    /// The two lists are nearly the same but not quite: the scene splits
+    /// assemble (10) and decorate (11) into two actions where the book, like
+    /// the rules engine, folds them into one. Both map onto book step 10.
+    /// Action 13 (throw out rotten) has no book step at all — it isn't part of
+    /// the recipe.
+    static func step(forActionID id: Int) -> BookStep? {
+        guard let number = actionToStepNumber[id] else { return nil }
+        return steps.first { $0.number == number }
+    }
+
+    private static let actionToStepNumber: [Int: Int] = [
+        1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7,
+        8: 8, 9: 9, 10: 10, 11: 10, 12: 11
+    ]
+
+    /// What the chef is left holding once this action finishes, or nil if the
+    /// action produces nothing you can carry.
+    ///
+    /// Pre-heating "produces" a hot oven and serving produces a served cake —
+    /// both real outcomes, neither of them something to put in a hand.
+    static func carriedResult(forActionID id: Int) -> String? {
+        // Action 10 is the scene's "Assemble", which shares book step 10 with
+        // "Decorate". Only the second of the two leaves anything in a hand —
+        // otherwise the chef walks out of assembling already holding a
+        // finished, decorated cake.
+        guard id != 10, let step = step(forActionID: id) else { return nil }
+
+        let uncarryable: Set<String> = ["hotOven", "servedCake"]
+        return uncarryable.contains(step.output) ? nil : step.output
+    }
+
     /// Steps the player is told to do that the rules engine cannot actually
     /// perform. A `gatingID` nobody checks is a comment, not a join — this is
     /// what makes it real. `RecipeBookView` trips an assertion on it in debug

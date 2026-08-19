@@ -99,18 +99,22 @@ nonisolated enum Recipe {
     // Order is now enforced by DEPOSITS (see GatingBridge), not `requires` —
     // an action fires only when its ingredients/preps are dropped in. `requires`
     // survives only where the gate isn't an item: bake needs a hot oven (8).
+    // Producing actions are repeatable — a chef can make a prep as many times
+    // as they gather the ingredients for. Only pre-heat and serve are one-shot
+    // (and are therefore the win goals). `game.complete` never records a
+    // repeatable action, so they always stay available.
     static let actions: [CookAction] = [
-        CookAction(id: 1,  name: "Cut strawberries",      station: .chopping,  motion: .chop,     requires: [],  output: "choppedStrawberries"),
-        CookAction(id: 2,  name: "Macerate Strawberries", station: .bowl2,                        requires: [],  output: "maceratedStrawberries"),
-        CookAction(id: 3,  name: "Sift flour",            station: .bowl1,     motion: .sift,     requires: [],  output: "siftedFlour"),
-        CookAction(id: 4,  name: "Melt Butter",           station: .stove,     motion: .melt,     requires: [],  output: "meltedButter"),
-        CookAction(id: 5,  name: "Crack Egg",             station: .bowl1,     motion: .breakEgg, requires: [],  output: "crackedEgg"),
-        CookAction(id: 6,  name: "Make raw dough",        station: .mixing,    motion: .mix,      requires: [],  output: "rawDough"),
-        CookAction(id: 7,  name: "Whip cream",            station: .bowl2,     motion: .whisk,    requires: [],  output: "whippedCream"),
+        CookAction(id: 1,  name: "Cut strawberries",      station: .chopping,  motion: .chop,     requires: [],  isRepeatable: true, output: "choppedStrawberries"),
+        CookAction(id: 2,  name: "Macerate Strawberries", station: .bowl2,                        requires: [],  isRepeatable: true, output: "maceratedStrawberries"),
+        CookAction(id: 3,  name: "Sift flour",            station: .bowl1,     motion: .sift,     requires: [],  isRepeatable: true, output: "siftedFlour"),
+        CookAction(id: 4,  name: "Melt Butter",           station: .stove,     motion: .melt,     requires: [],  isRepeatable: true, output: "meltedButter"),
+        CookAction(id: 5,  name: "Crack Egg",             station: .bowl1,     motion: .breakEgg, requires: [],  isRepeatable: true, output: "crackedEgg"),
+        CookAction(id: 6,  name: "Make raw dough",        station: .mixing,    motion: .mix,      requires: [],  isRepeatable: true, output: "rawDough"),
+        CookAction(id: 7,  name: "Whip cream",            station: .bowl2,     motion: .whisk,    requires: [],  isRepeatable: true, output: "whippedCream"),
         CookAction(id: 8,  name: "Pre-heat oven",         station: .ovenServe,                    requires: []),
-        CookAction(id: 9,  name: "Bake base",             station: .ovenServe,                    requires: [8], output: "bakedBase"),
-        CookAction(id: 10, name: "Assemble",              station: .table,                        requires: [],  output: "assembledCake"),
-        CookAction(id: 11, name: "Decorate Cake",         station: .table,                        requires: [],  output: "finishedCake"),
+        CookAction(id: 9,  name: "Bake base",             station: .ovenServe,                    requires: [8], isRepeatable: true, output: "bakedBase"),
+        CookAction(id: 10, name: "Assemble",              station: .table,                        requires: [],  isRepeatable: true, output: "assembledCake"),
+        CookAction(id: 11, name: "Decorate Cake",         station: .table,                        requires: [],  isRepeatable: true, output: "finishedCake"),
         CookAction(id: 12, name: "Serve the Cake",        station: .ovenServe,                    requires: []),
         CookAction(id: 13, name: "Threw rotten ingredients", station: .trash,                     requires: [],  isRepeatable: true)
     ]

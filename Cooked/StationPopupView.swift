@@ -27,12 +27,14 @@ struct StationPopupView: View {
     private var deposited: Set<String> { Set(session.snapshot.depositedFoods(at: station)) }
     private var output: String? { session.snapshot.outputFood(at: station) }
 
-    /// Actions this station offers right now (bowls share; done ones drop off).
+    /// Actions this station offers (bowls share). Repeatable producing actions
+    /// always appear so preps can be re-made; the one-shot goals (pre-heat,
+    /// serve) drop off once done. Trash/rotten is handled by its own flow.
     private var candidates: [CookAction] {
-        Recipe.actions.filter {
-            !$0.isRepeatable
-            && GameState.sharesActions(station, $0.station)
-            && !completed.contains($0.id)
+        Recipe.actions.filter { a in
+            a.id != 13
+            && GameState.sharesActions(station, a.station)
+            && (a.isRepeatable || !completed.contains(a.id))
         }
     }
 
@@ -78,7 +80,8 @@ struct StationPopupView: View {
                     prepButton(title: "Drop \(drop.name)", icon: "tray.and.arrow.down.fill") {
                         session.deposit(drop.id, at: station)
                         inventory.dropIngredient()
-                        onClose()
+                        // Stay open: the snapshot updates and the action button
+                        // lights up on its own — no need to re-tap the station.
                     }
                 }
 

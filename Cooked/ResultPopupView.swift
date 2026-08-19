@@ -27,7 +27,8 @@ struct ResultPopupView: View {
         ZStack {
             Color.black.opacity(0.5).ignoresSafeArea()
 
-            VStack(spacing: 20) {
+            ScrollView {
+              VStack(spacing: 20) {
                 Text("Congratulations!")
                     .font(.system(size: 22, weight: .heavy, design: .rounded))
                     .foregroundStyle(AppTheme.ink.opacity(0.7))
@@ -57,9 +58,10 @@ struct ResultPopupView: View {
                         onDone()
                     }
                 }
+              }
+              .padding(32)
             }
-            .padding(32)
-            .frame(maxWidth: 440)
+            .frame(maxWidth: 440, maxHeight: 360)
             .background(
                 RoundedRectangle(cornerRadius: 28, style: .continuous).fill(AppTheme.cream)
             )

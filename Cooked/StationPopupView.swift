@@ -59,7 +59,8 @@ struct StationPopupView: View {
             Color.black.opacity(0.45).ignoresSafeArea()
                 .onTapGesture { onClose() }
 
-            VStack(spacing: 16) {
+            ScrollView {
+              VStack(spacing: 16) {
                 Text(station.displayName)
                     .font(.system(size: 26, weight: .heavy, design: .rounded))
                     .foregroundStyle(AppTheme.ink)
@@ -96,9 +97,10 @@ struct StationPopupView: View {
                     .font(.system(size: 16, weight: .bold, design: .rounded))
                     .foregroundStyle(AppTheme.ink.opacity(0.6))
                     .padding(.top, 4)
+              }
+              .padding(32)
             }
-            .padding(32)
-            .frame(maxWidth: 460)
+            .frame(maxWidth: 460, maxHeight: 360)
             .background(
                 RoundedRectangle(cornerRadius: 28, style: .continuous).fill(AppTheme.cream)
             )

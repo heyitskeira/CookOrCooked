@@ -24,6 +24,8 @@ struct KitchenGameView: View {
     @State private var showStorage = false
     // The station whose popup is open (drop/pick-up vs do-action), if any.
     @State private var activeStation: StationID?
+    // The prep just produced, awaiting the "hands vs station" choice.
+    @State private var finishedPrep: PrepResult?
 
     var body: some View {
         GeometryReader { geo in
@@ -60,6 +62,16 @@ struct KitchenGameView: View {
                     .transition(.opacity)
                 }
 
+                if let prep = finishedPrep {
+                    ResultPopupView(
+                        result: prep,
+                        session: session,
+                        inventory: inventory,
+                        onDone: { withAnimation(.easeInOut(duration: 0.15)) { finishedPrep = nil } }
+                    )
+                    .transition(.opacity)
+                }
+
                 if session.phase == .hostLeft {
                     hostLeftBanner
                 } else if let player = session.localPlayer, !player.isConnected {
@@ -81,6 +93,11 @@ struct KitchenGameView: View {
         }
         made.onArriveStation = { station in
             withAnimation(.easeInOut(duration: 0.15)) { activeStation = station }
+        }
+        made.onActionFinished = { station, foodID in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                finishedPrep = PrepResult(station: station, foodID: foodID)
+            }
         }
         scene = made
     }

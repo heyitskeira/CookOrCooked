@@ -34,6 +34,10 @@ final class KitchenScene: SKScene {
     /// the grant opens *that* action, not just whatever `availableAction` picks
     /// first (bowls offer several).
     private var pendingAction: CookAction?
+
+    /// Called when a producing action finishes — SwiftUI shows the "you got a
+    /// prep" result popup (station id + the produced foodID).
+    var onActionFinished: ((StationID, String) -> Void)?
     /// Ingredients deposited per station when playing offline (no session). In a
     /// networked game the host owns this via the snapshot instead.
     private var localDeposited: [StationID: Set<String>] = [:]
@@ -472,7 +476,13 @@ final class KitchenScene: SKScene {
             }
 
             self.closeStation()
-            self.showToast("\(action.name) — done")
+            // A producing action shows the "you got a prep" result popup; a
+            // non-producing one (pre-heat, serve) just toasts.
+            if let out = action.output {
+                self.onActionFinished?(action.station, out)
+            } else {
+                self.showToast("\(action.name) — done")
+            }
         }
 
         addChild(overlay)

@@ -311,9 +311,24 @@ final class KitchenSession: ObservableObject {
     func reportCompletion(actionID: Int) {
         if isHost {
             guard let action = Recipe.action(actionID) else { return }
-            game.complete(action)
+            applyCompletion(action, claimant: localPlayerID)
         } else if let hostPeer {
             transport.send(.finishedAction(id: actionID), to: hostPeer)
+        }
+    }
+
+    /// Host-authoritative completion — used whether the host itself finished the
+    /// action or a guest reported it. Marks it done, consumes the deposits,
+    /// leaves the prep on the station, and frees the station lock.
+    private func applyCompletion(_ action: CookAction, claimant: String?) {
+        guard isHost else { return }
+        game.complete(action)
+        deposited[action.station.rawValue] = nil
+        if let output = action.output {
+            stationOutput[action.station.rawValue] = output
+        }
+        if let claimant, occupancy[action.station.rawValue] == claimant {
+            occupancy.removeValue(forKey: action.station.rawValue)
         }
     }
 
@@ -587,21 +602,7 @@ final class KitchenSession: ObservableObject {
 
         case .finishedAction(let id):
             guard isHost, let action = Recipe.action(id) else { return }
-            game.complete(action)
-            // The ingredients that were dropped in are consumed by the action…
-            deposited[action.station.rawValue] = nil
-            // …and the action leaves its prep sitting on the station until a
-            // chef picks it up. That output also blocks the station meanwhile.
-            if let output = action.output {
-                stationOutput[action.station.rawValue] = output
-            }
-            // Free the station immediately rather than waiting for the guest's
-            // own release to arrive — a completed action always ends the visit,
-            // and a packet lost here would lock the station forever.
-            if let claimant = peerToPlayer[peer],
-               occupancy[action.station.rawValue] == claimant {
-                occupancy.removeValue(forKey: action.station.rawValue)
-            }
+            applyCompletion(action, claimant: peerToPlayer[peer])
 
         case .claimStation(let station):
             guard isHost, let id = peerToPlayer[peer] else { return }

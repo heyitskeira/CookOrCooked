@@ -61,7 +61,10 @@ struct JoinKitchenView: View {
         .onChange(of: session.phase) { _, phase in
             // Only ever raise the cover from here. A constant binding would
             // present fine but leave the lobby's back button unable to close.
-            if phase == .lobby || phase == .playing { showLobby = true }
+            // .briefing and .playing both mean "admitted to a kitchen that has
+            // already left the lobby" — the waiting room passes them straight
+            // through to the recipe book or the game.
+            if phase == .lobby || phase == .briefing || phase == .playing { showLobby = true }
         }
         .fullScreenCover(isPresented: $showLobby) {
             WaitingRoomView(session: session)

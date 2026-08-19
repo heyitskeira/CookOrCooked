@@ -162,6 +162,12 @@ nonisolated enum NetMessage: Codable {
     case joinAccepted(player: Player)
     case joinRejected(reason: JoinRejection)
     case lobby(kitchenName: String, maxPlayers: Int, players: [Player])
+    /// Leave the lobby and open the recipe book. The clock is NOT running yet —
+    /// everyone is reading Today's Order while the head chef studies it.
     case start
+    /// The head chef has closed the book. Now the kitchen opens and the timer
+    /// starts. Split from `start` so that reading the recipe never costs the
+    /// team any of their two minutes.
+    case beginCooking
     case snapshot(GameSnapshot)
 }

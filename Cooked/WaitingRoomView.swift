@@ -15,7 +15,12 @@ struct WaitingRoomView: View {
     @Environment(\.dismiss) private var dismiss
 
     @ObservedObject var session: KitchenSession
-    @State private var showKitchen = false
+    /// Covers the whole game: recipe book first, then the kitchen.
+    @State private var showGame = false
+    /// Guards the dismiss-on-idle rule below. Without it the view would tear
+    /// itself down the instant it appears, because `.idle` is where every
+    /// session starts.
+    @State private var didLeaveLobby = false
 
     private var maxPlayers: Int { max(session.maxPlayers, session.players.count) }
 
@@ -45,15 +50,26 @@ struct WaitingRoomView: View {
         .onAppear {
             if session.isHost { session.startHosting() }
         }
-        // `initial: true` matters: a guest admitted to a game already in
-        // progress is sent `.start` during admission, so the phase is already
-        // .playing before this view appears and a change-only handler would
-        // strand them in the lobby forever.
+        // `initial: true` matters: a guest admitted to a briefing or a game
+        // already in progress is caught up during admission, so the phase has
+        // already moved on before this view appears and a change-only handler
+        // would strand them in the lobby forever.
         .onChange(of: session.phase, initial: true) { _, phase in
-            if phase == .playing { showKitchen = true }
+            switch phase {
+            case .briefing, .playing:
+                didLeaveLobby = true
+                showGame = true
+            case .idle where didLeaveLobby:
+                // Backing out of the recipe book leaves the kitchen entirely,
+                // so the lobby underneath must not linger.
+                showGame = false
+                dismiss()
+            default:
+                break
+            }
         }
-        .fullScreenCover(isPresented: $showKitchen) {
-            KitchenGameView(session: session)
+        .fullScreenCover(isPresented: $showGame) {
+            GameFlowView(session: session)
                 .ignoresSafeArea()
         }
     }

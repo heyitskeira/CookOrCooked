@@ -29,6 +29,10 @@ final class KitchenSession: ObservableObject {
         case searching
         case verifying(String)
         case lobby
+        /// Everyone is on the recipe book. The head chef reads Today's Order;
+        /// the rest see a closed book. Nothing is ticking — the clock does not
+        /// start until the head chef hits START.
+        case briefing
         case playing
         case rejected(JoinRejection)
         case hostLeft
@@ -78,6 +82,16 @@ final class KitchenSession: ObservableObject {
     var localPlayer: Player? { players.first { $0.id == localPlayerID } }
 
     func player(_ id: String) -> Player? { players.first { $0.id == id } }
+
+    /// Who reads Today's Order out loud.
+    ///
+    /// The head chef is the host for now. This is deliberately one computed
+    /// property rather than a check scattered across the views, so the
+    /// head-chef randomiser can replace the body — or make it a `@Published`
+    /// id the host broadcasts — without touching a single screen.
+    var headChefID: String? { players.first(where: \.isHost)?.id }
+
+    var isHeadChef: Bool { headChefID == localPlayerID }
 
     /// True while a claim is outstanding. The scene uses this to notice that a
     /// queue got silently dropped — a host blip, a grant that arrived too late
@@ -246,12 +260,33 @@ final class KitchenSession: ObservableObject {
         joinTimeout = nil
     }
 
+    /// Lobby → recipe book. Called by the host's "Start cooking" button.
+    ///
+    /// This used to drop straight into the kitchen and start the clock. It now
+    /// stops at the briefing, because two minutes is short enough that reading
+    /// the recipe has to be free.
     func startCooking() {
         guard isHost, canStart else { return }
         occupancy.removeAll()
         heldStation = nil
         pendingClaim = nil
         transport.broadcast(.start)
+        phase = .briefing
+    }
+
+    /// Recipe book → kitchen. Called by the head chef's START signpost, and
+    /// the only place the clock ever begins.
+    ///
+    /// Host-only by design: if a guest could start the game, one player still
+    /// reading page two would lose time to someone else's impatience.
+    ///
+    /// ⚠️ Head chef == host today (see `headChefID`). The day the randomiser
+    /// can hand the apron to a guest, that guest's START needs a new
+    /// guest→host message asking the host to run this — a guest broadcasting
+    /// it themselves would start a clock the host isn't ticking.
+    func beginCooking() {
+        guard isHost, phase == .briefing else { return }
+        transport.broadcast(.beginCooking)
         phase = .playing
         startTicking()
     }
@@ -616,6 +651,10 @@ final class KitchenSession: ObservableObject {
 
         case .start:
             guard !isHost else { return }
+            phase = .briefing
+
+        case .beginCooking:
+            guard !isHost else { return }
             phase = .playing
 
         case .stationGranted(let station):
@@ -788,7 +827,20 @@ final class KitchenSession: ObservableObject {
         peerToPlayer[peer] = id
         playerToPeer[id] = peer
         transport.send(.joinAccepted(player: player), to: peer)
-        if phase == .playing { transport.send(.start, to: peer) }
+        // Catch a late arrival up to wherever everyone else already is. A guest
+        // admitted during the briefing gets the book; one admitted mid-game
+        // skips it, because the kitchen is already open and the clock is
+        // already running.
+        switch phase {
+        case .briefing:
+            transport.send(.start, to: peer)
+        case .playing:
+            // Straight to the kitchen — sending `.start` first would flash the
+            // recipe book for a frame on a game that is already running.
+            transport.send(.beginCooking, to: peer)
+        default:
+            break
+        }
         broadcastLobby()
     }
 
@@ -827,9 +879,14 @@ final class KitchenSession: ObservableObject {
             // unwinnable for everyone still in the kitchen.
             releaseAll(for: id)
 
-            if phase == .playing {
+            if phase == .playing || phase == .briefing {
                 // Mid-game: hold the slot so their chef doesn't vanish from the
                 // kitchen and the recipe stays winnable. They can reclaim it.
+                //
+                // The briefing counts as mid-game here. It is human-paced — as
+                // long as it takes to read fourteen steps aloud — so it is the
+                // likeliest place to blip, and dropping the slot would hand a
+                // returning chef a new colour or a "kitchen full" rejection.
                 if let index = players.firstIndex(where: { $0.id == id }) {
                     players[index].isConnected = false
                 }
@@ -847,9 +904,13 @@ final class KitchenSession: ObservableObject {
             // open over a frozen kitchen.
             heldStation = nil
             pendingClaim = nil
-            if phase == .playing {
+            if phase == .playing || phase == .briefing {
                 // Grey ourselves out too. Without this the reconnecting player
                 // sees a frozen kitchen and no explanation for it.
+                //
+                // Briefing included: a drop while the head chef is still
+                // reading has to auto-rejoin like any other, or the player sits
+                // on "head chef is reading…" until the game ends without them.
                 if let index = players.firstIndex(where: { $0.id == localPlayerID }) {
                     players[index].isConnected = false
                 }

@@ -49,11 +49,12 @@ struct StationPopupView: View {
         return true
     }
 
-    /// A held item this station wants that hasn't been dropped yet.
+    /// The held item can be set down here. Any station takes it (as long as it
+    /// isn't blocked by a finished prep and doesn't already hold this item), so
+    /// a chef is never stuck carrying something with nowhere to put it.
     private var depositable: HeldIngredient? {
         guard output == nil, let ing = inventory.ingredient, !deposited.contains(ing.id) else { return nil }
-        let wanted = candidates.contains { GatingBridge.requiredIngredients(for: $0).contains(ing.id) }
-        return wanted ? ing : nil
+        return ing
     }
 
     // MARK: Body
@@ -92,14 +93,15 @@ struct StationPopupView: View {
                 }
 
                 // ---- Actions (contextual; dimmed when they can't run) ----
-                if candidates.isEmpty {
-                    Text("Nothing to make here right now")
+                ForEach(candidates, id: \.id) { action in
+                    actionButton(action)
+                }
+
+                // Only truly empty — no action, nothing to pick up, nothing to drop.
+                if candidates.isEmpty && output == nil && depositable == nil {
+                    Text("Nothing to do here right now")
                         .font(.system(size: 15, weight: .semibold, design: .rounded))
                         .foregroundStyle(AppTheme.ink.opacity(0.5))
-                } else {
-                    ForEach(candidates, id: \.id) { action in
-                        actionButton(action)
-                    }
                 }
 
                 Button("Close", action: onClose)

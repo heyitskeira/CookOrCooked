@@ -1,0 +1,165 @@
+//
+//  StationPopupView.swift
+//  Cooked
+//
+//  The choice a chef gets on reaching a station: drop / pick up preps, or do an
+//  action. The action button is contextual (a bowl offers several) and dims
+//  when it can't be done — wrong utensil, missing deposits, or a leftover prep
+//  blocking the station.
+//
+//  Presentation only: reads the session snapshot + the local inventory, calls
+//  `session` for deposits/pick-ups and `onDoAction` to launch the minigame.
+//
+
+import SwiftUI
+
+struct StationPopupView: View {
+    let station: StationID
+    @ObservedObject var session: KitchenSession
+    @ObservedObject var inventory: PlayerInventory
+    /// Launch the minigame for this action (handled by the scene).
+    var onDoAction: (CookAction) -> Void
+    var onClose: () -> Void
+
+    // MARK: Snapshot-derived state
+
+    private var completed: Set<Int> { Set(session.snapshot.completed) }
+    private var deposited: Set<String> { Set(session.snapshot.depositedFoods(at: station)) }
+    private var output: String? { session.snapshot.outputFood(at: station) }
+
+    /// Actions this station offers right now (bowls share; done ones drop off).
+    private var candidates: [CookAction] {
+        Recipe.actions.filter {
+            !$0.isRepeatable
+            && GameState.sharesActions(station, $0.station)
+            && !completed.contains($0.id)
+        }
+    }
+
+    private func canDo(_ action: CookAction) -> Bool {
+        guard output == nil else { return false }                      // blocked by leftover prep
+        guard GatingBridge.requiredIngredients(for: action).isSubset(of: deposited) else { return false }
+        if let need = GatingBridge.requiredUtensil(for: action) {
+            return inventory.utensil?.id == need.rawValue
+        }
+        return true
+    }
+
+    /// A held item this station wants that hasn't been dropped yet.
+    private var depositable: HeldIngredient? {
+        guard output == nil, let ing = inventory.ingredient, !deposited.contains(ing.id) else { return nil }
+        let wanted = candidates.contains { GatingBridge.requiredIngredients(for: $0).contains(ing.id) }
+        return wanted ? ing : nil
+    }
+
+    // MARK: Body
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.45).ignoresSafeArea()
+                .onTapGesture { onClose() }
+
+            VStack(spacing: 16) {
+                Text(station.displayName)
+                    .font(.system(size: 26, weight: .heavy, design: .rounded))
+                    .foregroundStyle(AppTheme.ink)
+
+                // ---- Preps: pick up what's finished, or drop what you carry ----
+                if let output {
+                    prepButton(title: "Pick up \(GatingBridge.displayName(output))", icon: "hand.raised.fill") {
+                        if let food = session.pickUpOutput(at: station) {
+                            inventory.pickUp(HeldIngredient(id: food, name: GatingBridge.displayName(food)))
+                        }
+                        onClose()
+                    }
+                }
+                if let drop = depositable {
+                    prepButton(title: "Drop \(drop.name)", icon: "tray.and.arrow.down.fill") {
+                        session.deposit(drop.id, at: station)
+                        inventory.dropIngredient()
+                        onClose()
+                    }
+                }
+
+                // ---- Actions (contextual; dimmed when they can't run) ----
+                if candidates.isEmpty {
+                    Text("Nothing to make here right now")
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundStyle(AppTheme.ink.opacity(0.5))
+                } else {
+                    ForEach(candidates, id: \.id) { action in
+                        actionButton(action)
+                    }
+                }
+
+                Button("Close", action: onClose)
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundStyle(AppTheme.ink.opacity(0.6))
+                    .padding(.top, 4)
+            }
+            .padding(32)
+            .frame(maxWidth: 460)
+            .background(
+                RoundedRectangle(cornerRadius: 28, style: .continuous).fill(AppTheme.cream)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(AppTheme.ink, lineWidth: 4)
+            )
+            .shadow(color: .black.opacity(0.3), radius: 16, y: 8)
+            .padding(40)
+        }
+    }
+
+    private func actionButton(_ action: CookAction) -> some View {
+        let enabled = canDo(action)
+        return Button {
+            onDoAction(action)
+            onClose()
+        } label: {
+            HStack(spacing: 12) {
+                if let u = GatingBridge.requiredUtensil(for: action) {
+                    Text(utensilEmoji(u))
+                }
+                Text(action.name)
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                Spacer()
+            }
+            .foregroundStyle(AppTheme.cream)
+            .padding(.horizontal, 20)
+            .frame(height: 60)
+            .frame(maxWidth: .infinity)
+            .background(Capsule().fill(AppTheme.tomato))
+            .overlay(Capsule().stroke(AppTheme.ink, lineWidth: 3))
+        }
+        .buttonStyle(.plain)
+        .opacity(enabled ? 1 : 0.4)
+        .disabled(!enabled)
+    }
+
+    private func prepButton(title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                Text(title).font(.system(size: 18, weight: .bold, design: .rounded))
+                Spacer()
+            }
+            .foregroundStyle(AppTheme.ink)
+            .padding(.horizontal, 20)
+            .frame(height: 56)
+            .frame(maxWidth: .infinity)
+            .background(Capsule().fill(.white))
+            .overlay(Capsule().stroke(AppTheme.ink, lineWidth: 2.5))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func utensilEmoji(_ u: UtensilID) -> String {
+        switch u {
+        case .knife:  return "🔪"
+        case .sifter: return "🫓"
+        case .whisk:  return "🥄"
+        case .mixer:  return "🌀"
+        case .pan:    return "🍳"
+        }
+    }
+}

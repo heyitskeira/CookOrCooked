@@ -22,6 +22,8 @@ struct KitchenGameView: View {
     // Utensil stock. Local for now; host-owned in multiplayer (see netcode spec).
     @StateObject private var pantry = StoragePantry()
     @State private var showStorage = false
+    // The station whose popup is open (drop/pick-up vs do-action), if any.
+    @State private var activeStation: StationID?
 
     var body: some View {
         GeometryReader { geo in
@@ -47,6 +49,17 @@ struct KitchenGameView: View {
                     .transition(.opacity)
                 }
 
+                if let station = activeStation {
+                    StationPopupView(
+                        station: station,
+                        session: session,
+                        inventory: inventory,
+                        onDoAction: { action in scene?.beginAction(action) },
+                        onClose: { withAnimation(.easeInOut(duration: 0.15)) { activeStation = nil } }
+                    )
+                    .transition(.opacity)
+                }
+
                 if session.phase == .hostLeft {
                     hostLeftBanner
                 } else if let player = session.localPlayer, !player.isConnected {
@@ -65,6 +78,9 @@ struct KitchenGameView: View {
         made.inventory = inventory
         made.onOpenStorage = {
             withAnimation(.easeInOut(duration: 0.2)) { showStorage = true }
+        }
+        made.onArriveStation = { station in
+            withAnimation(.easeInOut(duration: 0.15)) { activeStation = station }
         }
         scene = made
     }

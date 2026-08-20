@@ -52,7 +52,6 @@ struct KitchenNameView: View {
 
                     HStack(spacing: w * 0.03) {
                         namePanel(width: panelW)
-                        chefsPanel(width: panelW)
                     }
 
                     createButton(width: w * 0.17)
@@ -110,46 +109,6 @@ struct KitchenNameView: View {
                 }
             }
     }
-
-    // MARK: - Chefs panel (HOW MANY CHEFS?)
-
-    private func chefsPanel(width: CGFloat) -> some View {
-        Image("chefs-amount")
-            .resizable()
-            .scaledToFit()
-            .frame(width: width)
-            .overlay {
-                GeometryReader { g in
-                    let boxW = g.size.width * 0.24
-                    let boxH = g.size.height * 0.32
-                    HStack(spacing: g.size.width * 0.045) {
-                        ForEach(chefOptions, id: \.self) { n in
-                            Button {
-                                chefCount = n
-                            } label: {
-                                ZStack {
-                                    Color.clear
-                                    RoundedRectangle(cornerRadius: boxW * 0.18)
-                                        .fill(Color(red: 0.29, green: 0.35, blue: 0.62).opacity(0.22))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: boxW * 0.18)
-                                                .stroke(Color(red: 0.29, green: 0.35, blue: 0.62), lineWidth: 4)
-                                        )
-                                        .opacity(chefCount == n ? 1 : 0)
-                                }
-                                .frame(width: boxW, height: boxH)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    // Center over the three number boxes; tweak y to align
-                    .frame(width: g.size.width, height: g.size.height)
-                    .offset(y: g.size.height * 0.12)
-                }
-            }
-    }
-
     // MARK: - Create button
 
     private func createButton(width: CGFloat) -> some View {

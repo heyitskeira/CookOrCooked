@@ -86,6 +86,11 @@ struct StartScreenView: View {
             }
         }
         .ignoresSafeArea()
+        // Game over -> collapse the whole cover stack back to here.
+        .onReceive(NotificationCenter.default.publisher(for: .returnToStart)) { _ in
+            showKitchenName = false
+            showJoinKitchen = false
+        }
     }
 
     private var settingsButton: some View {

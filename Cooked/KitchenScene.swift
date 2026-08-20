@@ -741,18 +741,18 @@ final class KitchenScene: SKScene {
         guard let action = state.availableAction(at: station) else {
             showToast(state.blockReason(at: station))
             return .blocked
-        // The recipe itself says no — nothing to queue for.
-        guard let action = stationAction(at: station) else {
-            // Serving used to happen here, and `blockReason` still thinks it
-            // does — it would say "Not ready yet" to someone holding a
-            // finished cake. Point them at the middle of the room instead.
-            if let serve = ServeRitual.action, station == serve.station,
-               state.isUnlocked(serve) {
-                showToast("Take it to the middle — everyone serves together")
-            } else {
-                showToast(state.blockReason(at: station))
+            // The recipe itself says no — nothing to queue for.
+            guard let action = stationAction(at: station) else {
+                // Serving used to happen here, and `blockReason` still thinks it
+                // does — it would say "Not ready yet" to someone holding a
+                // finished cake. Point them at the middle of the room instead.
+                if let serve = ServeRitual.action, station == serve.station,
+                   state.isUnlocked(serve) {
+                    showToast("Take it to the middle — everyone serves together")
+                } else {
+                    showToast(state.blockReason(at: station))
+                }
             }
-            return
         }
 
         // Deposit: if the chef is holding a raw ingredient this action still

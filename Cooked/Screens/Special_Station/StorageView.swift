@@ -49,7 +49,7 @@ struct StorageView: View {
             .padding(.vertical, 28)
         }
         .ignoresSafeArea()
-        .overlay { resultPopup }
+        .overlay { resultPopup  }
         // Host replies synchronously; a guest's reply lands here a moment later.
         .onChange(of: session?.utensilReply) { _, _ in applyUtensilReply() }
     }

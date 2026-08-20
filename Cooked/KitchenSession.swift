@@ -73,6 +73,17 @@ final class KitchenSession: ObservableObject {
         let granted: Bool
     }
 
+    /// The host's answer to this device's most recent drawer request. DrawerView
+    /// observes it to empty the hand (stored), fill it (took), or explain a
+    /// refusal.
+    @Published private(set) var drawerReply: DrawerReply?
+
+    enum DrawerReply: Equatable {
+        case stored(slot: Int)
+        case refused(slot: Int, reason: String)
+        case took(slot: Int, item: DrawerItem?)
+    }
+
     let role: Role
     let localPlayerID: String
 
@@ -127,6 +138,8 @@ final class KitchenSession: ObservableObject {
     /// station rawValue -> [foodID] dropped in so far. Authoritative; cleared
     /// when the station's action completes.
     private var deposited: [String: [String]] = [:]
+    /// The drawer's four shelves. Authoritative; rides the snapshot.
+    private var drawerSlots: [DrawerItem?] = Array(repeating: nil, count: Drawer.slotCount)
     /// Who is standing in the serve zone, and when each of them last pressed.
     /// Host-only: a guest deciding for itself that the team served together is
     /// exactly the bug this whole dance exists to prevent.
@@ -596,6 +609,72 @@ final class KitchenSession: ObservableObject {
     /// Consumed by StorageView once it has acted on a grant/out reply.
     func clearUtensilReply() { utensilReply = nil }
 
+    /// Put the held item on a drawer shelf. The hand is only emptied once the
+    /// answer comes back, so a refusal can't destroy an ingredient.
+    func storeInDrawer(_ item: DrawerItem, slot: Int) {
+        if isHost || phase != .playing {
+            resolveStore(item, slot: slot, to: nil)
+        } else if let hostPeer {
+            transport.send(.requestStoreDrawer(slot: slot, item: item), to: hostPeer)
+        }
+    }
+
+    /// Take whatever is on a drawer shelf.
+    func takeFromDrawer(slot: Int) {
+        if isHost || phase != .playing {
+            resolveTake(slot: slot, to: nil)
+        } else if let hostPeer {
+            transport.send(.requestTakeDrawer(slot: slot), to: hostPeer)
+        }
+    }
+
+    /// Consumed by DrawerView once it has acted on a reply.
+    func clearDrawerReply() { drawerReply = nil }
+
+    /// What's on a shelf — from the host's own table, or the snapshot mirror.
+    func drawerItem(inSlot index: Int) -> DrawerItem? {
+        let slots = isHost ? drawerSlots : snapshot.drawer
+        guard index >= 0, index < slots.count else { return nil }
+        return slots[index]
+    }
+
+    /// Host-authoritative shelving. `peer == nil` means the host itself asked.
+    private func resolveStore(_ item: DrawerItem, slot: Int, to peer: PeerID?) {
+        guard slot >= 0, slot < drawerSlots.count else { return }
+
+        let answer: NetMessage
+        let local: DrawerReply
+
+        if drawerSlots[slot] != nil {
+            let reason = "That shelf is already taken"
+            answer = .drawerRefused(slot: slot, reason: reason)
+            local = .refused(slot: slot, reason: reason)
+        } else if !Drawer.canStore(item.foodID, inSlot: slot) {
+            let reason = Drawer.rejectionReason(for: item.foodID, name: item.name)
+            answer = .drawerRefused(slot: slot, reason: reason)
+            local = .refused(slot: slot, reason: reason)
+        } else {
+            drawerSlots[slot] = item
+            answer = .drawerStored(slot: slot)
+            local = .stored(slot: slot)
+        }
+
+        if let peer { transport.send(answer, to: peer) } else { drawerReply = local }
+    }
+
+    /// Host-authoritative retrieval. Two chefs reaching for the same shelf are
+    /// serialised here, so the second one gets nil rather than a duplicate.
+    private func resolveTake(slot: Int, to peer: PeerID?) {
+        guard slot >= 0, slot < drawerSlots.count else { return }
+        let item = drawerSlots[slot]
+        drawerSlots[slot] = nil
+        if let peer {
+            transport.send(.drawerTaken(slot: slot, item: item), to: peer)
+        } else {
+            drawerReply = .took(slot: slot, item: item)
+        }
+    }
+
     /// Host-authoritative utensil hand-out. `peer == nil` means the host itself
     /// asked, so the answer is published locally instead of sent.
     private func grantUtensil(id: String, returning: String?, to peer: PeerID?) {
@@ -713,7 +792,6 @@ final class KitchenSession: ObservableObject {
         resolveServe()
 
         var shot = GameSnapshot(completed: Array(game.completed),
-                                mess: game.mess,
                                 timeRemaining: game.timeRemaining,
                                 isOver: game.isOver,
                                 didWin: game.didWin,
@@ -721,6 +799,7 @@ final class KitchenSession: ObservableObject {
                                 occupancy: occupancy)
         shot.utensilStock = utensilStock
         shot.deposited = deposited
+        shot.drawer = drawerSlots
         shot.serveReady = Array(serveZone)
         shot.serveArmed = serveIsArmed
         shot.serveHolding = Array(serveHolds.keys)
@@ -825,6 +904,14 @@ final class KitchenSession: ObservableObject {
             guard isHost else { return }
             depositFood(foodID, at: station)
 
+        case .requestStoreDrawer(let slot, let item):
+            guard isHost else { return }
+            resolveStore(item, slot: slot, to: peer)
+
+        case .requestTakeDrawer(let slot):
+            guard isHost else { return }
+            resolveTake(slot: slot, to: peer)
+
         // ---- guest side ----
 
         case .queued(let position):
@@ -882,6 +969,18 @@ final class KitchenSession: ObservableObject {
         case .utensilOut(let id):
             guard !isHost else { return }
             utensilReply = UtensilReply(id: id, granted: false)
+
+        case .drawerStored(let slot):
+            guard !isHost else { return }
+            drawerReply = .stored(slot: slot)
+
+        case .drawerRefused(let slot, let reason):
+            guard !isHost else { return }
+            drawerReply = .refused(slot: slot, reason: reason)
+
+        case .drawerTaken(let slot, let item):
+            guard !isHost else { return }
+            drawerReply = .took(slot: slot, item: item)
 
         case .snapshot(let shot):
             guard !isHost else { return }

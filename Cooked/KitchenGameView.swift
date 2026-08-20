@@ -21,7 +21,10 @@ struct KitchenGameView: View {
     @StateObject private var inventory = PlayerInventory()
     // Utensil stock. Local for now; host-owned in multiplayer (see netcode spec).
     @StateObject private var pantry = StoragePantry()
+    // Drawer shelves. Local fallback only; host-owned once a game is running.
+    @StateObject private var drawerBox = DrawerBox()
     @State private var showStorage = false
+    @State private var showDrawer = false
     /// True while a station screen is up inside the scene. SwiftUI chrome is
     /// drawn above the SpriteView, so the scene has to tell us to get out of
     /// the way — the station screen has its own hands.
@@ -51,6 +54,13 @@ struct KitchenGameView: View {
                     .transition(.opacity)
                 }
 
+                if showDrawer {
+                    DrawerView(inventory: inventory, box: drawerBox, session: session, onClose: {
+                        withAnimation(.easeInOut(duration: 0.2)) { showDrawer = false }
+                    })
+                    .transition(.opacity)
+                }
+
                 if session.phase == .hostLeft {
                     hostLeftBanner
                 } else if let player = session.localPlayer, !player.isConnected {
@@ -70,6 +80,8 @@ struct KitchenGameView: View {
         made.onOpenStorage = {
             withAnimation(.easeInOut(duration: 0.2)) { showStorage = true }
         }
+        made.onOpenDrawer = {
+            withAnimation(.easeInOut(duration: 0.2)) { showDrawer = true }
         made.onHeadsDownChanged = { down in
             withAnimation(.easeInOut(duration: 0.15)) { headsDown = down }
         }

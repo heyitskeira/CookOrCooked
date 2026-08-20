@@ -25,6 +25,8 @@ final class KitchenScene: SKScene {
     var inventory: PlayerInventory?
     /// Called when the chef reaches storage — ContentView opens the pantry.
     var onOpenStorage: (() -> Void)?
+    /// Called when the chef reaches the drawer — opens the 2x2 shelf overlay.
+    var onOpenDrawer: (() -> Void)?
     /// True while a station screen is up. SwiftUI draws its own chrome on top
     /// of the SpriteView, and nothing inside the scene can hide it — so the
     /// inventory bar would sit over the station screen showing the same two
@@ -685,6 +687,60 @@ final class KitchenScene: SKScene {
             return
         }
 
+        // Neither is the drawer — it opens its own 2x2 shelf overlay.
+        if station == .drawer {
+            onOpenDrawer?()
+            return
+        }
+        
+//        if station == .bowl1{
+//            ChooseAction()
+//        }
+//        
+//        if station == .bowl2 {
+//            ChooseAction()
+//        }
+        
+        switch evaluateStation(station) {
+        case .blocked:
+            return
+
+        case .ready(let action):
+            // Offline: nobody to share the kitchen with.
+            guard let session else {
+                openStation(action)
+                return
+            }
+
+            // Networked: ask the host for the station and stand here until it
+            // says yes. `resolveWaiting` opens the screen when the answer
+            // arrives, which may be immediately or may be after the current
+            // occupant walks off.
+            waitingStation = station
+            lastWaitToastFor = nil
+            session.claimStation(station)
+        }
+    }
+
+    private enum StationEntry {
+        case ready(CookAction)
+        /// Nothing to open. A toast has already explained why, or the chef's
+        /// ingredient was deposited and that was the whole visit.
+        case blocked
+    }
+
+    /// Every check that must pass before a station screen opens.
+    ///
+    /// This lives in one place because there are two ways in: walking up to a
+    /// free station (`arrive`) and being handed one you queued for
+    /// (`resolveWaiting`). The queued path used to skip all of this and open
+    /// whatever was available at that instant, which dropped a waiting chef
+    /// into an action they never chose — and the action's product then
+    /// overwrote whatever they were holding.
+    private func evaluateStation(_ station: StationID) -> StationEntry {
+        guard let action = state.availableAction(at: station) else {
+            showToast(state.blockReason(at: station))
+            return .blocked
         // The recipe itself says no — nothing to queue for.
         guard let action = stationAction(at: station) else {
             // Serving used to happen here, and `blockReason` still thinks it
@@ -708,35 +764,32 @@ final class KitchenScene: SKScene {
             inventory?.dropIngredient()
             showToast("Dropped \(ing.name)")
             refreshStations()
-            return
+            return .blocked
         }
 
         // Gate: every required ingredient must be deposited first.
         let missing = need.subtracting(have)
         if !missing.isEmpty {
             showToast("Need: " + missing.map { $0.capitalized }.sorted().joined(separator: ", "))
-            return
+            return .blocked
         }
 
         // Gating seam: also require the correct utensil in hand before opening
         // (or queueing for) the station.
         if let block = GatingBridge.blockReason(for: action, holding: inventory) {
             showToast(block)
-            return
+            return .blocked
         }
 
-        // Offline: nobody to share the kitchen with.
-        guard let session else {
-            openStation(action)
-            return
+        // The action hands its product to the chef when it finishes, so a full
+        // ingredient hand would be silently overwritten. Refuse instead of
+        // destroying what they are carrying.
+        if action.produces != nil, let held = inventory?.ingredient {
+            showToast("Hands full — put the \(held.name) down first")
+            return .blocked
         }
 
-        // Networked: ask the host for the station and stand here until it says
-        // yes. `resolveWaiting` opens the screen when the answer arrives, which
-        // may be immediately or may be after the current occupant walks off.
-        waitingStation = station
-        lastWaitToastFor = nil
-        session.claimStation(station)
+        return .ready(action)
     }
 
     /// Runs every frame while queueing. Handles the three things that can
@@ -777,7 +830,13 @@ final class KitchenScene: SKScene {
         if session.heldStation == waiting, let action = stationAction(at: waiting) {
             waitingStation = nil
             lastWaitToastFor = nil
-            openStation(action)
+            switch evaluateStation(waiting) {
+            case .ready(let action):
+                openStation(action)
+            case .blocked:
+                // Not our turn to work after all — let the next chef in.
+                session.releaseStation()
+            }
         } else if let occupant = session.occupant(of: waiting),
                   occupant.id != session.localPlayerID,
                   lastWaitToastFor != waiting {
@@ -833,6 +892,18 @@ final class KitchenScene: SKScene {
                 self.localDeposited[action.station] = nil
             }
 
+            // The action hands its product to whoever performed it. That's what
+            // gives the chef something prepped to carry — to the next station,
+            // or to the drawer.
+            if let produced = action.produces {
+                let name = FoodID(rawValue: produced)?.displayName ?? produced
+                self.inventory?.pickUp(HeldIngredient(id: produced, name: name))
+            }
+
+            self.closeStation()
+            self.showToast(action.produces == nil
+                           ? "\(action.name) — done"
+                           : "\(action.name) — done, you're holding it")
             // Walk out holding what you just made. Visual only — see
             // `carriedPrep`.
             self.carriedPrep = RecipeBook.carriedResult(forActionID: action.id)
@@ -975,7 +1046,7 @@ final class KitchenScene: SKScene {
     private func refreshStations() {
         for (id, node) in stationNodes {
             let owner = session?.occupant(of: id)
-            let ready = id == .storage || stationAction(at: id) != nil
+            let ready = id == .storage || id == .drawer || state.availableAction(at: id) != nil
             let key = owner.map { "busy:\($0.id):\($0.colorIndex)" } ?? "free:\(ready)"
             if stationLooks[id] == key { continue }
             stationLooks[id] = key

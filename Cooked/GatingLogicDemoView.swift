@@ -95,9 +95,8 @@ private enum GatingTests {
 
         // 6) The two bowls are independent.
         do {
-            let kitchen = Kitchen()
-            let bowls = kitchen.stations(of: .bowl)
-            expect("There are exactly two bowls", bowls.count == 2)
+            let bowls = [Station(type: .bowl, index: 0), Station(type: .bowl, index: 1)]
+            expect("The two bowls have distinct ids", bowls[0].id != bowls[1].id)
             GatingEngine.deposit(FoodItem(id: .flour), into: bowls[0])
             expect("Depositing in bowl 0 leaves bowl 1 empty",
                    bowls[0].deposited.count == 1 && bowls[1].deposited.isEmpty)

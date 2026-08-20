@@ -32,15 +32,38 @@ final class KitchenScene: SKScene {
     /// inventory bar would sit over the station screen showing the same two
     /// slots the hands were hidden to get out of the way.
     var onHeadsDownChanged: ((Bool) -> Void)?
+
+    /// Called when the chef reaches any other station — SwiftUI shows the
+    /// station popup (drop/pick-up vs do-action). The scene no longer opens the
+    /// minigame itself; `beginAction` does, once the popup asks it to.
+    var onArriveStation: ((StationID) -> Void)?
+
+    /// The action a chef chose from the popup and is now queueing for. Kept so
+    /// the grant opens *that* action, not just whatever `availableAction` picks
+    /// first (bowls offer several).
+    private var pendingAction: CookAction?
+
+    /// Called when a producing action finishes — SwiftUI shows the "you got a
+    /// prep" result popup (station id + the produced foodID).
+    var onActionFinished: ((StationID, String) -> Void)?
     /// Ingredients deposited per station when playing offline (no session). In a
     /// networked game the host owns this via the snapshot instead.
     private var localDeposited: [StationID: Set<String>] = [:]
+
+    /// Finished prep sitting on a station when playing offline (no session).
+    private var localOutput: [StationID: String] = [:]
 
     /// What's been dropped at a station — from the snapshot if networked, else
     /// the local store.
     private func depositedFoods(at station: StationID) -> Set<String> {
         if let session { return Set(session.snapshot.depositedFoods(at: station)) }
         return localDeposited[station] ?? []
+    }
+
+    /// The finished prep on a station (snapshot if networked, else local).
+    private func outputFood(at station: StationID) -> String? {
+        if let session { return session.outputFood(at: station) }
+        return localOutput[station]
     }
 
     /// Drop an ingredient at a station (host-authoritative when networked).
@@ -88,20 +111,16 @@ final class KitchenScene: SKScene {
     /// The touch doing the holding, so lifting a *different* finger doesn't
     /// release the button.
     private var serveTouch: UITouch?
+    /// When this device's finger went down, and whether the host has confirmed
+    /// the hold yet. Both exist so "the host dropped my hold" can be told apart
+    /// from "the host hasn't answered yet" — see `refreshServe`.
+    private var serveHoldStartedAt: TimeInterval?
+    private var serveHoldAcknowledged = false
     /// Offline only — when the local bar started filling. Networked games keep
     /// all of this on the host, where it belongs.
     private var localChargeStartedAt: TimeInterval?
     /// White sheet for the flash between a station screen and the kitchen.
     private var flash: SKSpriteNode?
-
-    /// What the chef is visibly carrying out of a station.
-    ///
-    /// Visual only — this deliberately does NOT put anything into
-    /// `PlayerInventory`. Preps landing in the inventory for real is Agung's
-    /// job (task 9), and two people writing the same slot is how you get an
-    /// ingredient that exists twice. When that lands, delete this and read
-    /// `inventory.ingredient?.id` instead.
-    private var carriedPrep: String?
 
     /// The station this chef has walked to and is queueing for. Set on arrival,
     /// cleared once the host grants it or the chef walks off. While it is set
@@ -141,6 +160,16 @@ final class KitchenScene: SKScene {
         buildServeRitual()
         if Recipe.showRecipeChecklist { buildChecklist() }
         refreshStations()
+    }
+
+    /// The scene is going away — the host quit, the player backed out, SwiftUI
+    /// rebuilt the view. Anything a station screen was holding onto has to be
+    /// handed back here, because `closeStation` is never reached on this path:
+    /// the melt station owns the microphone, and leaving it owned means the
+    /// music stays ducked to a whisper for the rest of the app's life.
+    override func willMove(from view: SKView) {
+        super.willMove(from: view)
+        stationOverlay?.cleanUp()
     }
 
     private func buildHands() {
@@ -190,18 +219,11 @@ final class KitchenScene: SKScene {
     }
 
     /// Fills the hands from what the chef is actually holding.
-    ///
-    /// `carriedPrep` is the visual stand-in until preps land in the inventory
-    /// for real; the utensil is already true today, so it is read straight from
-    /// the model rather than mirrored.
     private func refreshHands() {
-        // A real ingredient in the model always wins, and retires the stand-in
-        // for good. Without this the prep would come *back* the moment the
-        // chef put a real ingredient down — showing chopped strawberries that
-        // are actually sitting on the chopping board.
-        if inventory?.ingredient != nil { carriedPrep = nil }
-
-        hands?.setItems(prep: inventory?.ingredient?.id ?? carriedPrep,
+        // Straight from the model. This used to fall back to a local stand-in
+        // because finished preps didn't reach the inventory yet; they do now
+        // (see `openStation`), so there is one source of truth again.
+        hands?.setItems(prep: inventory?.ingredient?.id,
                         isRotten: inventory?.ingredient?.isRotten ?? false,
                         utensil: inventory?.utensil?.id)
     }
@@ -606,12 +628,25 @@ final class KitchenScene: SKScene {
             // window ran out — let go locally too, so the button pops out and
             // the player knows they have to press again rather than standing
             // there with a dead finger on the screen.
-            if isHoldingServe, session.snapshot.serveArmed,
-               !session.snapshot.serveHolding.contains(session.localPlayerID),
+            //
+            // The two flags below are the whole point. "I'm not in the host's
+            // list" means two completely different things depending on when you
+            // ask: before the first acknowledgement it just means the answer is
+            // still in flight, and treating that as a refusal cancelled every
+            // hold one frame after it started — the button appeared to do
+            // nothing at all. Only believe a refusal once the host has either
+            // confirmed us at least once, or had a fair chance to.
+            let acknowledged = session.snapshot.serveHolding.contains(session.localPlayerID)
+            if acknowledged { serveHoldAcknowledged = true }
+
+            if isHoldingServe, session.snapshot.serveArmed, !acknowledged,
                session.snapshot.serveProgress == 0 {
-                endServeHold()
-                serveNode.nudge()
-                look.holding = false
+                let waited = Date.timeIntervalSinceReferenceDate - (serveHoldStartedAt ?? 0)
+                if serveHoldAcknowledged || waited > ServeRitual.holdAckGrace {
+                    endServeHold()
+                    serveNode.nudge()
+                    look.holding = false
+                }
             }
         } else {
             // Offline there is nobody to be in time with, so holding on your own
@@ -667,6 +702,8 @@ final class KitchenScene: SKScene {
         }
 
         isHoldingServe = true
+        serveHoldStartedAt = Date.timeIntervalSinceReferenceDate
+        serveHoldAcknowledged = false
     }
 
     /// Finger up — or the chef wandered off, or the game ended underneath us.
@@ -674,6 +711,8 @@ final class KitchenScene: SKScene {
         guard isHoldingServe else { return }
         isHoldingServe = false
         serveTouch = nil
+        serveHoldStartedAt = nil
+        serveHoldAcknowledged = false
         localChargeStartedAt = nil
         session?.setServeHold(false)
     }
@@ -757,39 +796,57 @@ final class KitchenScene: SKScene {
 
         // Deposit: if the chef is holding a raw ingredient this action still
         // needs, drop it here and stop. (Host-authoritative in a networked game.)
+
+        // Serving is no longer something one chef does at the oven: the whole
+        // team has to gather in the middle of the room and press together (see
+        // ServeRitual). Point anyone who walks up here holding the finished
+        // cake at the floor, rather than opening a popup that cannot serve.
+        if let serve = ServeRitual.action, station == serve.station,
+           state.isUnlocked(serve) {
+            showToast("Take it to the middle — everyone serves together")
+            return
+        }
+
+        // Every other station now shows the SwiftUI popup (drop/pick-up vs do
+        // action). The popup calls back into `beginAction` if the chef acts.
+        onArriveStation?(station)
+    }
+
+    /// Start a specific action the chef picked from the station popup. Runs the
+    /// gate (station not blocked by a leftover prep, all ingredients deposited,
+    /// right utensil) then opens the minigame — directly offline, or via the
+    /// host's station lock in a networked game.
+    func beginAction(_ action: CookAction) {
+        // A finished prep on the station blocks new work until it's collected.
+        if outputFood(at: action.station) != nil {
+            showToast("Clear the \(GatingBridge.displayName(outputFood(at: action.station)!)) first")
+            return
+        }
+
         let need = GatingBridge.requiredIngredients(for: action)
-        let have = depositedFoods(at: station)
-        if let ing = inventory?.ingredient, need.contains(ing.id), !have.contains(ing.id) {
-            deposit(ing.id, at: station)
-            inventory?.dropIngredient()
-            showToast("Dropped \(ing.name)")
-            refreshStations()
-            return .blocked
-        }
-
-        // Gate: every required ingredient must be deposited first.
-        let missing = need.subtracting(have)
+        let missing = need.subtracting(depositedFoods(at: action.station))
         if !missing.isEmpty {
-            showToast("Need: " + missing.map { $0.capitalized }.sorted().joined(separator: ", "))
-            return .blocked
+            showToast("Need: " + missing.map { GatingBridge.displayName($0) }.sorted().joined(separator: ", "))
+            return
         }
 
-        // Gating seam: also require the correct utensil in hand before opening
-        // (or queueing for) the station.
         if let block = GatingBridge.blockReason(for: action, holding: inventory) {
             showToast(block)
-            return .blocked
+            return
         }
 
-        // The action hands its product to the chef when it finishes, so a full
-        // ingredient hand would be silently overwritten. Refuse instead of
-        // destroying what they are carrying.
-        if action.produces != nil, let held = inventory?.ingredient {
-            showToast("Hands full — put the \(held.name) down first")
-            return .blocked
+        pendingAction = action
+
+        // Offline: nobody to share the kitchen with.
+        guard let session else {
+            openStation(action)
+            return
         }
 
-        return .ready(action)
+        // Networked: claim the station and wait for the host's grant.
+        waitingStation = action.station
+        lastWaitToastFor = nil
+        session.claimStation(action.station)
     }
 
     /// Runs every frame while queueing. Handles the three things that can
@@ -827,16 +884,12 @@ final class KitchenScene: SKScene {
             return
         }
 
-        if session.heldStation == waiting, let action = stationAction(at: waiting) {
+        if session.heldStation == waiting,
+           let action = pendingAction ?? state.availableAction(at: waiting) {
             waitingStation = nil
             lastWaitToastFor = nil
-            switch evaluateStation(waiting) {
-            case .ready(let action):
-                openStation(action)
-            case .blocked:
-                // Not our turn to work after all — let the next chef in.
-                session.releaseStation()
-            }
+            pendingAction = nil
+            openStation(action)
         } else if let occupant = session.occupant(of: waiting),
                   occupant.id != session.localPlayerID,
                   lastWaitToastFor != waiting {
@@ -873,9 +926,6 @@ final class KitchenScene: SKScene {
 
         let overlay = makeOverlay(for: action)
 
-        // Whatever was in hand goes into this action. Carrying the last prep
-        // out of a station you just used it at would be a lie.
-        carriedPrep = nil
 
         // When the player finishes the motion, mark the action done and
         // put them back in the kitchen.
@@ -888,28 +938,23 @@ final class KitchenScene: SKScene {
                 session.reportCompletion(actionID: action.id)
             } else {
                 self.state.complete(action)
-                // Offline: the deposited ingredients are consumed by the action.
+                // Offline: consume the deposits and leave the prep on the station.
                 self.localDeposited[action.station] = nil
+                if let out = action.output { self.localOutput[action.station] = out }
             }
 
-            // The action hands its product to whoever performed it. That's what
-            // gives the chef something prepped to carry — to the next station,
-            // or to the drawer.
-            if let produced = action.produces {
-                let name = FoodID(rawValue: produced)?.displayName ?? produced
-                self.inventory?.pickUp(HeldIngredient(id: produced, name: name))
-            }
-
-            self.closeStation()
-            self.showToast(action.produces == nil
-                           ? "\(action.name) — done"
-                           : "\(action.name) — done, you're holding it")
             // Walk out holding what you just made. Visual only — see
             // `carriedPrep`.
             self.carriedPrep = RecipeBook.carriedResult(forActionID: action.id)
 
             self.closeStation(rewarding: true)
-            self.showToast("\(action.name) — done")
+            // A producing action shows the "you got a prep" result popup; a
+            // non-producing one (pre-heat, serve) just toasts.
+            if let out = action.output {
+                self.onActionFinished?(action.station, out)
+            } else {
+                self.showToast("\(action.name) — done")
+            }
         }
 
         addChild(overlay)
@@ -1018,7 +1063,10 @@ final class KitchenScene: SKScene {
 
         let seconds = Int(state.timeRemaining)
         hudTime.text = String(format: "%d:%02d", seconds / 60, seconds % 60)
-        hudTime.fontColor = state.timeRemaining < 45 ? SKColor.red : ink
+        // Turns red for the last 10% of the round rather than a fixed 45s. On a
+        // 15 minute clock a flat 45 meant the warning arrived with 5% left; on
+        // a 2 minute one it was on for a third of the game.
+        hudTime.fontColor = state.timeRemaining < Recipe.timeLimit * 0.1 ? SKColor.red : ink
         hudMess.text = "\(state.completedGoalCount)/\(Recipe.goalIDs.count)"
 
         for (id, label) in checklistLabels {
@@ -1144,7 +1192,6 @@ final class KitchenScene: SKScene {
         chef.removeAllActions()
         chef.position = spawnPoint(forColorIndex: session?.localPlayer?.colorIndex ?? 0)
 
-        carriedPrep = nil
         isInServeZone = false
         endServeHold()
         inventory?.clear()

@@ -30,6 +30,7 @@ struct StorageView: View {
     @State private var takenUtensil: Utensil? = nil            // result popup
     @State private var outOfStock: String? = nil               // result popup
     @State private var pendingUtensil: Utensil? = nil          // awaiting host reply
+    @State private var prepAlert: String? = nil                // "already holding a prep"
 
     // Stock shown per utensil — from the host if networked, else local.
     private func utensilsLeft(_ id: String) -> Int {
@@ -49,7 +50,12 @@ struct StorageView: View {
             .padding(.vertical, 28)
         }
         .ignoresSafeArea()
-        .overlay { resultPopup  }
+        .overlay { resultPopup }
+        .overlay {
+            if let prepAlert {
+                PrepHeldAlert(message: prepAlert) { self.prepAlert = nil }
+            }
+        }
         // Host replies synchronously; a guest's reply lands here a moment later.
         .onChange(of: session?.utensilReply) { _, _ in applyUtensilReply() }
     }
@@ -129,9 +135,13 @@ struct StorageView: View {
         case .ingredients:
             itemList(Storage.ingredients.map { ($0.id, $0.name) }) { id in
                 guard let ing = Storage.ingredients.first(where: { $0.id == id }) else { return }
+                if inventory.isHoldingPrep {
+                    prepAlert = "You already held on to a prep!"
+                    return
+                }
                 let draw = Storage.draw(ing)
                 ingredientDraw = draw
-                // Put it in hand (replaces whatever ingredient was held).
+                // Put it in hand (replaces whatever raw ingredient was held).
                 inventory.pickUp(HeldIngredient(id: draw.ingredient.id,
                                                 name: draw.ingredient.name,
                                                 isRotten: draw.isRotten))

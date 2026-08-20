@@ -29,6 +29,10 @@ struct KitchenGameView: View {
     /// drawn above the SpriteView, so the scene has to tell us to get out of
     /// the way — the station screen has its own hands.
     @State private var headsDown = false
+    // The station whose popup is open (drop/pick-up vs do-action), if any.
+    @State private var activeStation: StationID?
+    // The prep just produced, awaiting the "hands vs station" choice.
+    @State private var finishedPrep: PrepResult?
 
     var body: some View {
         GeometryReader { geo in
@@ -61,6 +65,41 @@ struct KitchenGameView: View {
                     .transition(.opacity)
                 }
 
+                if let station = activeStation {
+                    StationPopupView(
+                        station: station,
+                        session: session,
+                        inventory: inventory,
+                        onDoAction: { action in scene?.beginAction(action) },
+                        onClose: { withAnimation(.easeInOut(duration: 0.15)) { activeStation = nil } }
+                    )
+                    .transition(.opacity)
+                }
+
+                if let prep = finishedPrep {
+                    ResultPopupView(
+                        result: prep,
+                        session: session,
+                        inventory: inventory,
+                        onDone: { withAnimation(.easeInOut(duration: 0.15)) { finishedPrep = nil } }
+                    )
+                    .transition(.opacity)
+                }
+
+                // Win/lose result once the game ends. Reads the synced snapshot.
+                if session.snapshot.isOver {
+                    EndGameResultsView(
+                        didWin: session.snapshot.didWin,
+                        timeRemaining: session.snapshot.timeRemaining,
+                        onBackToStart: {
+                            session.leave()
+                            NotificationCenter.default.post(name: .returnToStart, object: nil)
+                        }
+                    )
+                    .transition(.opacity)
+                    .zIndex(2)
+                }
+
                 if session.phase == .hostLeft {
                     hostLeftBanner
                 } else if let player = session.localPlayer, !player.isConnected {
@@ -82,11 +121,19 @@ struct KitchenGameView: View {
         }
         made.onOpenDrawer = {
             withAnimation(.easeInOut(duration: 0.2)) { showDrawer = true }
-            made.onHeadsDownChanged = { down in
-                withAnimation(.easeInOut(duration: 0.15)) { headsDown = down }
-            }
-            scene = made
         }
+        made.onHeadsDownChanged = { down in
+            withAnimation(.easeInOut(duration: 0.15)) { headsDown = down }
+        }
+        made.onArriveStation = { station in
+            withAnimation(.easeInOut(duration: 0.15)) { activeStation = station }
+        }
+        made.onActionFinished = { station, foodID in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                finishedPrep = PrepResult(station: station, foodID: foodID)
+            }
+        }
+        scene = made
     }
 
     private var hostLeftBanner: some View {

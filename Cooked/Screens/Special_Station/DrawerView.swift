@@ -58,11 +58,11 @@ struct DrawerView: View {
     // MARK: Acting on a shelf
     
     private func tap(slot index: Int) {
-        if item(inSlot: index) == nil && inventory.ingredient!.isRotten == false {
+        if item(inSlot: index) == nil && inventory.ingredient != nil && inventory.ingredient!.isRotten == false {
             store(into: index)
         } else {
             take(from: index)
-            if inventory.ingredient!.isRotten {
+            if inventory.ingredient!.isRotten && inventory.ingredient != nil{
                 notice = "Dispose the rotten ingredient"
             }
         }
@@ -218,7 +218,7 @@ struct DrawerView: View {
             }
             .padding(14)
             .frame(maxWidth: .infinity)
-            .frame(height: .infinity)
+            .frame(maxHeight: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(isCold ? coldFill : roomFill)

@@ -10,6 +10,7 @@ import SwiftUI
 struct StartScreenView: View {
     @State private var showKitchenName = false
     @State private var showJoinKitchen = false
+    @State private var showSettings = false
 
     var body: some View {
         GeometryReader { geo in
@@ -80,8 +81,16 @@ struct StartScreenView: View {
             .fullScreenCover(isPresented: $showJoinKitchen) {
                 JoinKitchenView()
             }
+            .sheet(isPresented: $showSettings) {
+                SettingsView()
+            }
         }
         .ignoresSafeArea()
+        // Game over -> collapse the whole cover stack back to here.
+        .onReceive(NotificationCenter.default.publisher(for: .returnToStart)) { _ in
+            showKitchenName = false
+            showJoinKitchen = false
+        }
     }
 
     private var settingsButton: some View {
@@ -110,7 +119,7 @@ struct StartScreenView: View {
     }
 
     private func openSettings() {
-        // TODO: present settings
+        showSettings = true
     }
 }
 

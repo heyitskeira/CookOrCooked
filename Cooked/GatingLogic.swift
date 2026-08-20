@@ -33,7 +33,7 @@ enum FoodID: String, CaseIterable {
     case strawberries, cream, butter, egg, flour, sugar
     // Intermediates / products — made by actions, never rotten.
     case choppedStrawberries, maceratedStrawberries, siftedFlour
-    case meltedButter, beatenEgg, rawDough, whippedCream, bakedBase, finishedCake
+    case meltedButter, crackedEgg, rawDough, whippedCream, bakedBase, finishedCake
 
     var displayName: String {
         switch self {
@@ -47,7 +47,7 @@ enum FoodID: String, CaseIterable {
         case .maceratedStrawberries: return "Macerated strawberries"
         case .siftedFlour:           return "Sifted flour"
         case .meltedButter:          return "Melted butter"
-        case .beatenEgg:             return "Beaten egg"
+        case .crackedEgg:             return "Cracked egg"
         case .rawDough:              return "Raw dough"
         case .whippedCream:          return "Whipped cream"
         case .bakedBase:             return "Baked base"
@@ -150,10 +150,10 @@ enum Recipes {
 
         GatingRecipe(id: "beat", name: "Beat egg", station: .bowl,
                      input: .exact([.egg]), utensil: .whisk,
-                     requiresHotOven: false, effect: .produce(.beatenEgg)),
+                     requiresHotOven: false, effect: .produce(.crackedEgg)),
 
         GatingRecipe(id: "dough", name: "Make dough", station: .bowl,
-                     input: .exact([.siftedFlour, .meltedButter, .beatenEgg, .sugar, .cream]), utensil: .mixer,
+                     input: .exact([.siftedFlour, .meltedButter, .crackedEgg, .sugar, .cream]), utensil: .mixer,
                      requiresHotOven: false, effect: .produce(.rawDough)),
 
         GatingRecipe(id: "whip", name: "Whip cream", station: .bowl,

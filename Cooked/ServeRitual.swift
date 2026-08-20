@@ -84,6 +84,17 @@ nonisolated enum ServeRitual {
     /// wait, long enough that "three, two, one, now" works.
     static let gatherWindow: TimeInterval = 2
 
+    /// How long to wait for the host to confirm a hold before believing it was
+    /// refused.
+    ///
+    /// The host rebuilds its snapshot ten times a second, so an acknowledgement
+    /// is never less than 100ms away, plus the round trip. Anything shorter
+    /// than that and a device concludes its own press was rejected one frame
+    /// after making it — which is exactly the bug that made the button do
+    /// nothing at all. Comfortably under `gatherWindow`, so a genuinely refused
+    /// hold still pops out well before the window closes.
+    static let holdAckGrace: TimeInterval = 0.75
+
     /// How long everyone has to keep holding, together, to fill the bar.
     ///
     /// The spike-defuse beat: the moment anyone lets go or steps off their

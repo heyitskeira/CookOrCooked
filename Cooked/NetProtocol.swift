@@ -111,6 +111,10 @@ nonisolated struct GameSnapshot: Codable, Equatable {
     /// How full the serve bar is, 0...1. Only climbs while every connected chef
     /// is holding; the moment one lets go it goes back to zero.
     var serveProgress: Double = 0
+    /// The finished prep sitting on a station, waiting to be picked up. Keys are
+    /// `StationID.rawValue`, values a `foodID`. A station with an output here is
+    /// blocked — no new action until someone takes it.
+    var stationOutput: [String: String] = [:]
 
     /// Convenience for the scene: who holds this station, if anyone.
     func holder(of station: StationID) -> String? {
@@ -120,6 +124,11 @@ nonisolated struct GameSnapshot: Codable, Equatable {
     /// What's been dropped into this station so far.
     func depositedFoods(at station: StationID) -> [String] {
         deposited[station.rawValue] ?? []
+    }
+
+    /// The prep sitting on this station waiting to be collected, if any.
+    func outputFood(at station: StationID) -> String? {
+        stationOutput[station.rawValue]
     }
 
     static let empty = GameSnapshot(completed: [],
@@ -185,6 +194,12 @@ nonisolated enum NetMessage: Codable {
     /// cake is only served if every chef holds at the same time long enough to
     /// fill the bar, so letting go is as meaningful as pressing.
     case serveHold(Bool)
+    /// "I'm taking the finished prep off this station into my hands." The host
+    /// clears the station's output; the prep goes into the guest's local hand.
+    case pickUpOutput(station: String)
+    /// "I'm taking one ingredient I'd dropped back off this station." The host
+    /// removes that foodID from the station's deposits; it goes back into hand.
+    case takeDeposit(station: String, foodID: String)
 
     // host -> guest
     case queued(position: Int)

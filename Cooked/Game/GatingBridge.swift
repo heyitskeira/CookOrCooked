@@ -27,7 +27,7 @@ enum GatingBridge {
         case .mix:      return .mixer
         case .sift:     return .sifter
         case .melt:     return .pan
-        case .breakEgg: return .whisk
+        case .breakEgg: return nil
         case .hold:     return nil     // no tool needed (e.g. macerate, bake, serve)
         }
     }
@@ -52,7 +52,7 @@ enum GatingBridge {
         case 4:  return ["butter"]                                                    // melt
         case 5:  return ["egg"]                                                       // crack egg
         case 6:  return ["siftedFlour", "meltedButter", "crackedEgg", "sugar"]        // dough
-        case 7:  return ["cream", "sugar"]                                            // whip
+        case 7:  return ["cream"]                                                     // whip
         case 9:  return ["rawDough"]                                                  // bake (+ hot oven via requires)
         case 10: return ["bakedBase", "whippedCream", "maceratedStrawberries"]        // assemble
         case 11: return ["assembledCake"]                                             // decorate

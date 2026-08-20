@@ -903,6 +903,8 @@ final class KitchenScene: SKScene {
             return EggOverlay(screenSize: size, actionName: action.name)
         case .hold:
             return HoldOverlay(screenSize: size, actionName: action.name)
+        case .throwAway:
+            return GarbageThrowOverlay(screenSize: size, actionName: action.name)
         }
     }
 

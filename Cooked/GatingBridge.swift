@@ -33,6 +33,7 @@ enum GatingBridge {
         case .melt:     return .pan
         case .breakEgg: return .whisk
         case .hold:     return nil     // no tool needed (e.g. macerate, bake, serve)
+        case .throwAway: return nil    // the bin takes what's in your hand, no tool
         }
     }
 

@@ -158,6 +158,11 @@ struct ContentView: View {
                         activeScene = makeScene(DecorateScreen(size: size))
                     }
      
+                    menuButton(title: "Garbage throw") {
+                        activeName = "Garbage throw"
+                        activeScene = makeScene(GarbageThrowPreviewScene(size: size))
+                    }
+
                     // Delete this button if KitchenScene is not in your project yet.
                     menuButton(title: "Kitchen map") {
                         activeName = "Kitchen map"

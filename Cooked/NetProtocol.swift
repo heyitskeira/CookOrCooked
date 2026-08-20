@@ -86,6 +86,30 @@ nonisolated struct GameSnapshot: Codable, Equatable {
     /// so every chef sees the same bowl contents.
     var deposited: [String: [String]] = [:]
 
+    // MARK: Serving together
+    //
+    // Serving is the one thing in the kitchen nobody can do alone: every chef
+    // has to be standing in the serve zone, and then everyone has to press at
+    // the same moment. These three fields are what each device draws from —
+    // who has gathered, whether the button is live, and whose press is still
+    // inside the window.
+
+    /// Player ids currently standing in the serve zone.
+    var serveReady: [String] = []
+
+    /// True when every connected chef is in the zone. Until then the SERVE
+    /// button is visible but dead, so the missing person is obvious.
+    var serveArmed: Bool = false
+
+    /// Player ids holding the button right now. A hold that isn't joined by
+    /// everyone else within `ServeRitual.gatherWindow` is dropped by the host,
+    /// so pressing early does nothing rather than banking anything.
+    var serveHolding: [String] = []
+
+    /// How full the serve bar is, 0...1. Only climbs while every connected chef
+    /// is holding; the moment one lets go it goes back to zero.
+    var serveProgress: Double = 0
+
     /// Convenience for the scene: who holds this station, if anyone.
     func holder(of station: StationID) -> String? {
         occupancy[station.rawValue]
@@ -146,6 +170,13 @@ nonisolated enum NetMessage: Codable {
     case requestUtensil(id: String, returning: String?)
     /// "I'm dropping this ingredient into the station in front of me."
     case deposit(station: String, foodID: String)
+    /// "I am / am no longer standing in the serve zone." Sent on the edge, not
+    /// every frame — standing still is the normal case and it costs nothing.
+    case serveReady(Bool)
+    /// "I am holding the serve button" / "I let go." A hold, not a tap: the
+    /// cake is only served if every chef holds at the same time long enough to
+    /// fill the bar, so letting go is as meaningful as pressing.
+    case serveHold(Bool)
 
     // host -> guest
     case queued(position: Int)

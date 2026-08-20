@@ -108,10 +108,16 @@ final class HandsNode: SKNode {
     // MARK: What's in them
 
     /// Put an item in each hand. Passing nil empties that hand.
-    func setItems(prep: String?, utensil: String?) {
-        if shownPrep != .some(prep) {
-            shownPrep = .some(prep)
-            setItem(prep, on: leftHand)
+    ///
+    /// `isRotten` used to be the inventory bar's job — it drew a queasy face on
+    /// spoiled ingredients. The bar is gone, so the mark comes here instead:
+    /// without it a chef can't tell what needs binning, and the bin is a real
+    /// step in the recipe.
+    func setItems(prep: String?, isRotten: Bool = false, utensil: String?) {
+        let leftKey = prep.map { isRotten ? "\($0)!rotten" : $0 }
+        if shownPrep != .some(leftKey) {
+            shownPrep = .some(leftKey)
+            setItem(prep, on: leftHand, isRotten: isRotten)
         }
         if shownUtensil != .some(utensil) {
             shownUtensil = .some(utensil)
@@ -119,7 +125,7 @@ final class HandsNode: SKNode {
         }
     }
 
-    private func setItem(_ id: String?, on hand: SKNode) {
+    private func setItem(_ id: String?, on hand: SKNode, isRotten: Bool = false) {
         hand.childNode(withName: "item")?.removeFromParent()
         guard let id else { return }
 
@@ -151,6 +157,24 @@ final class HandsNode: SKNode {
             label.fontColor = SKColor(white: 0.12, alpha: 0.85)
             label.verticalAlignmentMode = .center
             item.addChild(label)
+        }
+
+        if isRotten {
+            let mark = SKLabelNode(fontNamed: "AvenirNext-Bold")
+            mark.text = "!"
+            mark.fontSize = 15
+            mark.fontColor = .white
+            mark.verticalAlignmentMode = .center
+            mark.zPosition = 2
+
+            let badge = SKShapeNode(circleOfRadius: 11)
+            badge.fillColor = SKColor(red: 0.55, green: 0.30, blue: 0.55, alpha: 1)
+            badge.strokeColor = SKColor(white: 1, alpha: 0.9)
+            badge.lineWidth = 2
+            badge.position = CGPoint(x: 22, y: 22)
+            badge.zPosition = 1
+            badge.addChild(mark)
+            item.addChild(badge)
         }
 
         hand.addChild(item)

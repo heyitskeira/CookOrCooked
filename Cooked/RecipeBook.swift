@@ -51,12 +51,18 @@ nonisolated struct BookStep: Identifiable, Equatable {
     /// a display-only beat the rules engine does not have as its own action.
     let gatingID: String?
 
+    /// True when the step doesn't happen at a counter at all — the whole team
+    /// has to gather in the middle of the room and press together. Only
+    /// serving, and the reason the book must not send anyone to the oven.
+    var servedTogether: Bool = false
+
     var id: Int { number }
 
     /// What the player should look for on the map. The two bowls are
     /// interchangeable (see `GameState.sharesActions`), so naming one of them
     /// would be a lie — say both.
     var stationLabel: String {
+        if servedTogether { return "Middle of the room — everyone" }
         switch station {
         case .bowl1, .bowl2: return "Bowl 1 or 2"
         default:             return station.displayName
@@ -126,14 +132,14 @@ enum RecipeBook {
                  output: "finishedCake", station: .table,
                  gatingID: "assemble"),
 
-        // ⚠️ The two engines disagree on where serving happens: GatingLogic
-        // says the table, `Recipe.actions` (what KitchenScene actually runs)
-        // says the oven counter. The book follows the scene, because that is
-        // the station a player will really be standing at.
+        // Serving is not done at a counter any more — every chef has to be
+        // standing in the serve zone and press together. `station` is kept
+        // only because the action model still carries one; `servedTogether` is
+        // what the player actually reads.
         BookStep(number: 11, title: "Serve",
                  inputs: ["finishedCake"], utensil: nil,
                  output: "servedCake", station: .ovenServe,
-                 gatingID: "serve")
+                 gatingID: "serve", servedTogether: true)
     ]
 
     /// The book is a two-page spread, so the steps are split down the middle.

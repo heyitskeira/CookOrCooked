@@ -127,6 +127,18 @@ final class KitchenSession: ObservableObject {
     /// station rawValue -> [foodID] dropped in so far. Authoritative; cleared
     /// when the station's action completes.
     private var deposited: [String: [String]] = [:]
+    /// Who is standing in the serve zone, and when each of them last pressed.
+    /// Host-only: a guest deciding for itself that the team served together is
+    /// exactly the bug this whole dance exists to prevent.
+    private var serveZone: Set<String> = []
+    /// Who is holding the button, and since when. The timestamp is what expires
+    /// a lone hold after `gatherWindow` — press early and nothing is banked.
+    private var serveHolds: [String: TimeInterval] = [:]
+    /// When the whole team last became "all holding at once". nil means the bar
+    /// is empty. Reset the instant anyone lets go or steps off their mark,
+    /// which is the entire spike-defuse feel.
+    private var serveChargeStartedAt: TimeInterval?
+
     private var chefs: [String: ChefSnapshot] = [:]
     private var peerToPlayer: [PeerID: String] = [:]
     private var playerToPeer: [String: PeerID] = [:]
@@ -149,6 +161,11 @@ final class KitchenSession: ObservableObject {
     private var lastSentY: Double = -1
     private var lastSentStation: String?
     private var lastSentBusy = false
+    /// Last serve-zone state this device told the host about. The scene asks
+    /// every frame; only the edges are worth a packet.
+    private var lastSentServeReady = false
+    /// Same idea for the hold: the button reports its edges, not its state.
+    private var lastSentServeHold = false
 
     private struct PendingJoin {
         let peer: PeerID
@@ -305,6 +322,11 @@ final class KitchenSession: ObservableObject {
         transport.stop()
         joinQueue.removeAll()
         occupancy.removeAll()
+        serveZone.removeAll()
+        serveHolds.removeAll()
+        serveChargeStartedAt = nil
+        lastSentServeReady = false
+        lastSentServeHold = false
         heldStation = nil
         pendingClaim = nil
         verifying = nil
@@ -341,12 +363,163 @@ final class KitchenSession: ObservableObject {
     }
 
     func reportCompletion(actionID: Int) {
+        // Serving never arrives this way. It is the one action that isn't a
+        // station minigame, and accepting it here would mean a single device
+        // could end the game as a win with nobody gathered — the exact thing
+        // the ritual exists to prevent. See `resolveServe`.
+        guard actionID != ServeRitual.actionID else { return }
+
         if isHost {
             guard let action = Recipe.action(actionID) else { return }
             game.complete(action)
         } else if let hostPeer {
             transport.send(.finishedAction(id: actionID), to: hostPeer)
         }
+    }
+
+    // MARK: Serving together
+    //
+    // The rule: every connected chef has to be standing in the serve zone, and
+    // then all of them have to hold SERVE at the same time until the bar fills.
+    //
+    // Both halves are judged by the host and nowhere else. Guests report where
+    // they are and when they pressed; whether that adds up to a served cake is
+    // never their call. That is also why a press is stored as a *timestamp*
+    // rather than a flag — presses expire by themselves, so a mistimed serve
+    // simply doesn't happen instead of needing to be undone.
+
+    /// Called by the scene as the chef walks in and out of the circle.
+    func reportServeReady(_ inZone: Bool) {
+        // Edge-triggered, but reconciled against what the host actually thinks.
+        // The host wipes the zone on a disconnect and again after a serve, and
+        // a purely local flag would then never speak up again — leaving a chef
+        // standing in the circle that nobody can see them in.
+        let hostHasUs = snapshot.serveReady.contains(localPlayerID)
+        guard inZone != lastSentServeReady || inZone != hostHasUs else { return }
+        lastSentServeReady = inZone
+
+        if isHost {
+            setServeReady(localPlayerID, inZone)
+        } else if let hostPeer {
+            transport.send(.serveReady(inZone), to: hostPeer)
+        }
+    }
+
+    /// Called as this device's SERVE button goes down and comes back up.
+    func setServeHold(_ holding: Bool) {
+        guard holding != lastSentServeHold else { return }
+        lastSentServeHold = holding
+
+        if isHost {
+            registerServeHold(localPlayerID, holding)
+        } else if let hostPeer {
+            transport.send(.serveHold(holding), to: hostPeer)
+        }
+    }
+
+    private func setServeReady(_ id: String, _ inZone: Bool) {
+        if inZone {
+            serveZone.insert(id)
+        } else {
+            // Walking off your mark drops your hold with you. Otherwise you
+            // could press, wander away, and still count towards the serve.
+            serveZone.remove(id)
+            serveHolds.removeValue(forKey: id)
+        }
+    }
+
+    private func registerServeHold(_ id: String, _ holding: Bool) {
+        guard holding else {
+            serveHolds.removeValue(forKey: id)
+            return
+        }
+        guard serveIsArmed else { return }
+        // Keep the original timestamp if they're already holding: re-sending
+        // must not refresh your own gather window and let you lean on the
+        // button indefinitely while the others sort themselves out.
+        if serveHolds[id] == nil {
+            serveHolds[id] = Date.timeIntervalSinceReferenceDate
+        }
+    }
+
+    /// Everyone still connected is standing in the circle, and there is
+    /// actually a cake to serve.
+    private var serveIsArmed: Bool {
+        guard let serve = ServeRitual.action, game.isUnlocked(serve) else { return false }
+
+        let here = Set(players.filter(\.isConnected).map(\.id))
+        guard !here.isEmpty, here.isSubset(of: serveZone) else { return false }
+
+        // A dropped player's slot is held so the recipe stays winnable, and
+        // "everyone connected" would otherwise mean the last chef standing can
+        // serve alone the moment the others blip. A kitchen that started with
+        // company has to still have company.
+        return players.count < 2 || here.count >= 2
+    }
+
+    /// Runs inside the host's tick — the whole serve, judged in one place.
+    ///
+    /// Two phases, and the second only exists while the first is perfectly
+    /// true:
+    ///   1. Gathering. Anyone can hold. A hold nobody joins within
+    ///      `gatherWindow` is dropped, so the button pops back out on its own.
+    ///   2. Charging. The instant *everyone* is holding, the bar starts. Any
+    ///      hand off the button — or any chef off their mark — empties it.
+    private func resolveServe() {
+        // The clock is checked before this in `tick`, and `complete` doesn't
+        // consult `isOver` — without this a serve resolving on the very tick
+        // time ran out would flip a loss into a win.
+        guard !game.isOver else {
+            serveHolds.removeAll()
+            serveChargeStartedAt = nil
+            return
+        }
+
+        let alive = Set(players.filter(\.isConnected).map(\.id))
+        serveZone.formIntersection(alive)
+        serveHolds = serveHolds.filter { alive.contains($0.key) }
+
+        let now = Date.timeIntervalSinceReferenceDate
+        let everyoneHolding = !alive.isEmpty && alive.isSubset(of: Set(serveHolds.keys))
+
+        guard serveIsArmed else {
+            // Someone stepped off. Nothing survives that.
+            serveHolds.removeAll()
+            serveChargeStartedAt = nil
+            return
+        }
+
+        if !everyoneHolding {
+            // Phase one. Drop holds that have been waiting alone too long —
+            // this is what makes an early press quietly release itself instead
+            // of banking a head start.
+            serveHolds = serveHolds.filter { now - $0.value <= ServeRitual.gatherWindow }
+            serveChargeStartedAt = nil
+            return
+        }
+
+        // Phase two.
+        let startedAt = serveChargeStartedAt ?? now
+        serveChargeStartedAt = startedAt
+
+        guard now - startedAt >= ServeRitual.chargeDuration,
+              let serve = ServeRitual.action else { return }
+
+        game.complete(serve)
+        serveZone.removeAll()
+        serveHolds.removeAll()
+        serveChargeStartedAt = nil
+    }
+
+    /// How full the bar is right now, 0...1.
+    private var serveProgress: Double {
+        // Completing clears `serveChargeStartedAt`, so without this the last
+        // thing the team sees is the bar snapping back to empty at the exact
+        // moment they won.
+        if game.completed.contains(ServeRitual.actionID) { return 1 }
+        guard let startedAt = serveChargeStartedAt else { return 0 }
+        let elapsed = Date.timeIntervalSinceReferenceDate - startedAt
+        return min(1, max(0, elapsed / ServeRitual.chargeDuration))
     }
 
     // MARK: Station locks
@@ -498,6 +671,12 @@ final class KitchenSession: ObservableObject {
         for (key, holder) in occupancy where holder == playerID {
             occupancy.removeValue(forKey: key)
         }
+        // Someone who dropped is not standing in the serve zone, whatever they
+        // last reported. Leaving them in it would let the rest of the kitchen
+        // serve without them — or, worse, never be able to.
+        serveZone.remove(playerID)
+        serveHolds.removeValue(forKey: playerID)
+        serveChargeStartedAt = nil
     }
 
     // MARK: Host — snapshot loop
@@ -529,6 +708,10 @@ final class KitchenSession: ObservableObject {
         // "did it free up yet?" pass the guests get when a snapshot lands.
         retryPendingClaim()
 
+        // Presses expire on a clock, so this has to run every tick rather than
+        // only when one arrives.
+        resolveServe()
+
         var shot = GameSnapshot(completed: Array(game.completed),
                                 mess: game.mess,
                                 timeRemaining: game.timeRemaining,
@@ -538,6 +721,10 @@ final class KitchenSession: ObservableObject {
                                 occupancy: occupancy)
         shot.utensilStock = utensilStock
         shot.deposited = deposited
+        shot.serveReady = Array(serveZone)
+        shot.serveArmed = serveIsArmed
+        shot.serveHolding = Array(serveHolds.keys)
+        shot.serveProgress = serveProgress
         snapshot = shot
         transport.broadcast(.snapshot(shot))
         if game.isOver {
@@ -598,6 +785,10 @@ final class KitchenSession: ObservableObject {
                                      station: station, isBusy: isBusy)
 
         case .finishedAction(let id):
+            // A guest claiming it "finished" the serve would end the game for
+            // everyone with nobody in the circle. Serving is decided in
+            // `resolveServe` and nowhere else.
+            guard id != ServeRitual.actionID else { return }
             guard isHost, let action = Recipe.action(id) else { return }
             game.complete(action)
             // The ingredients that were dropped in are consumed by the action.
@@ -621,6 +812,14 @@ final class KitchenSession: ObservableObject {
         case .requestUtensil(let id, let returning):
             guard isHost else { return }
             grantUtensil(id: id, returning: returning, to: peer)
+
+        case .serveReady(let inZone):
+            guard isHost, let id = peerToPlayer[peer] else { return }
+            setServeReady(id, inZone)
+
+        case .serveHold(let holding):
+            guard isHost, let id = peerToPlayer[peer] else { return }
+            registerServeHold(id, holding)
 
         case .deposit(let station, let foodID):
             guard isHost else { return }
@@ -821,7 +1020,10 @@ final class KitchenSession: ObservableObject {
             player = Player(id: id, name: name, isHost: false,
                             isConnected: true, colorIndex: colour)
             players.append(player)
-            chefs[id] = ChefSnapshot(playerID: id, x: 0.5, y: 0.5,
+            // Spawned on their own spot in the middle of the ring — the same
+            // place the whole team has to return to in order to serve.
+            let spawn = ServeRitual.spawnUnitPosition(forColorIndex: colour)
+            chefs[id] = ChefSnapshot(playerID: id, x: Double(spawn.x), y: Double(spawn.y),
                                      station: nil, isBusy: false)
         }
         peerToPlayer[peer] = id
@@ -904,6 +1106,8 @@ final class KitchenSession: ObservableObject {
             // open over a frozen kitchen.
             heldStation = nil
             pendingClaim = nil
+            lastSentServeReady = false
+            lastSentServeHold = false
             if phase == .playing || phase == .briefing {
                 // Grey ourselves out too. Without this the reconnecting player
                 // sees a frozen kitchen and no explanation for it.

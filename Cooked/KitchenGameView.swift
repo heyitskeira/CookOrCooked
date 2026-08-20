@@ -37,18 +37,12 @@ struct KitchenGameView: View {
                     AppTheme.background
                 }
 
-                // Inventory indicator, pinned bottom-centre over the kitchen.
-                // Gone while heads-down at a station: the station screen shows
-                // the same two slots as a pair of hands, and two versions of
-                // the truth on one screen is one too many.
-                if !headsDown {
-                    VStack {
-                        Spacer()
-                        InventoryBar(inventory: inventory)
-                            .padding(.bottom, 20)
-                    }
-                    .transition(.opacity)
-                }
+                // The inventory bar used to live here, bottom-centre. It is
+                // gone on purpose: the chef's hands inside the scene show the
+                // same two slots, and the bar's 260x125 footprint sat directly
+                // on top of the oven station once the kitchen became a ring.
+                // Moving it doesn't help — top-centre covers three more
+                // stations. Rotten ingredients are marked on the hand instead.
 
                 if showStorage {
                     StorageView(inventory: inventory, pantry: pantry, session: session, onClose: {

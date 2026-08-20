@@ -76,6 +76,19 @@ final class KitchenScene: SKScene {
 
     /// The chef's hands, parked in the bottom corners of the map.
     private var hands: HandsNode?
+
+    /// The serve zone, the SERVE button and the "who are we waiting on" line.
+    private var serveNode: ServeRitualNode?
+    /// Whether this chef is standing in the circle right now.
+    private var isInServeZone = false
+    /// True while this device's finger is down on the SERVE button.
+    private var isHoldingServe = false
+    /// The touch doing the holding, so lifting a *different* finger doesn't
+    /// release the button.
+    private var serveTouch: UITouch?
+    /// Offline only — when the local bar started filling. Networked games keep
+    /// all of this on the host, where it belongs.
+    private var localChargeStartedAt: TimeInterval?
     /// White sheet for the flash between a station screen and the kitchen.
     private var flash: SKSpriteNode?
 
@@ -97,6 +110,18 @@ final class KitchenScene: SKScene {
 
     private let ink = SKColor(white: 0.12, alpha: 1)
     private let paper = SKColor(red: 0.96, green: 0.95, blue: 0.92, alpha: 1)
+    /// The room floor — a shade darker than the page, so the map reads as a
+    /// place rather than as diagram on blank paper.
+    private let floorColour = SKColor(red: 0.91, green: 0.89, blue: 0.83, alpha: 1)
+    /// Counter tops. Filled, not outlined: eight hairline rectangles on cream
+    /// was the reason nothing on this screen was legible.
+    private let counterColour = SKColor(red: 0.99, green: 0.98, blue: 0.96, alpha: 1)
+    private let counterEdge = SKColor(red: 0.62, green: 0.55, blue: 0.45, alpha: 1)
+    private let readyColour = SKColor(red: 0.15, green: 0.55, blue: 0.30, alpha: 1)
+
+    /// Station boxes. Bigger than they were — the old 84x52 could not hold
+    /// "Chopping" at a legible size on a phone.
+    private static let stationSize = CGSize(width: 96, height: 58)
 
     // MARK: Setup
 
@@ -106,10 +131,12 @@ final class KitchenScene: SKScene {
         // Needed for the two finger pull on the egg screen.
         view.isMultipleTouchEnabled = true
 
+        buildFloor()
         buildStations()
         buildChef()
         buildHUD()
         buildHands()
+        buildServeRitual()
         if Recipe.showRecipeChecklist { buildChecklist() }
         refreshStations()
     }
@@ -138,12 +165,24 @@ final class KitchenScene: SKScene {
         flash = sheet
     }
 
+    private func buildServeRitual() {
+        guard serveNode == nil else { return }
+        let made = ServeRitualNode(sceneSize: size)
+        // Under the chefs (5) and the stations (1) — it's paint on the floor.
+        // The button inside it carries its own zPosition and still lands above
+        // the HUD.
+        made.zPosition = 0.5
+        addChild(made)
+        serveNode = made
+    }
+
     /// The scene is created at the safe-area size and resized to the view's
     /// real bounds a moment later, so anything pinned to an edge or sized to
     /// the screen has to be told.
     override func didChangeSize(_ oldSize: CGSize) {
         super.didChangeSize(oldSize)
         hands?.layout(for: size)
+        serveNode?.layout(for: size)
         flash?.size = size
         flash?.position = CGPoint(x: size.width / 2, y: size.height / 2)
     }
@@ -161,6 +200,7 @@ final class KitchenScene: SKScene {
         if inventory?.ingredient != nil { carriedPrep = nil }
 
         hands?.setItems(prep: inventory?.ingredient?.id ?? carriedPrep,
+                        isRotten: inventory?.ingredient?.isRotten ?? false,
                         utensil: inventory?.utensil?.id)
     }
 
@@ -181,24 +221,38 @@ final class KitchenScene: SKScene {
         flash?.isHidden = true
     }
 
+    /// The room: a floor slab inset from the screen edge, so the counters
+    /// around it read as being against walls.
+    private func buildFloor() {
+        let floor = SKShapeNode(rectOf: CGSize(width: size.width - 24,
+                                               height: size.height - 24),
+                                cornerRadius: 26)
+        floor.position = CGPoint(x: size.width / 2, y: size.height / 2)
+        floor.fillColor = floorColour
+        floor.strokeColor = counterEdge.withAlphaComponent(0.35)
+        floor.lineWidth = 2
+        floor.zPosition = -1
+        addChild(floor)
+    }
+
     private func buildStations() {
         for id in StationID.allCases {
             let point = CGPoint(x: id.unitPosition.x * size.width,
                                 y: id.unitPosition.y * size.height)
             stationPoints[id] = point
 
-            let node = SKShapeNode(rectOf: CGSize(width: 84, height: 52), cornerRadius: 10)
+            let node = SKShapeNode(rectOf: Self.stationSize, cornerRadius: 12)
             node.position = point
-            node.lineWidth = 1.5
-            node.strokeColor = ink
-            node.fillColor = .clear
+            node.lineWidth = 2.5
+            node.strokeColor = counterEdge
+            node.fillColor = counterColour
             node.zPosition = 1
             addChild(node)
             stationNodes[id] = node
 
-            let label = SKLabelNode(fontNamed: "AvenirNext-DemiBold")
+            let label = SKLabelNode(fontNamed: "AvenirNext-Bold")
             label.text = id.displayName
-            label.fontSize = 11
+            label.fontSize = 14
             label.fontColor = ink
             label.verticalAlignmentMode = .center
             label.position = .zero
@@ -209,7 +263,7 @@ final class KitchenScene: SKScene {
             let owner = SKLabelNode(fontNamed: "AvenirNext-DemiBold")
             owner.fontSize = 10
             owner.verticalAlignmentMode = .center
-            owner.position = CGPoint(x: 0, y: -36)
+            owner.position = CGPoint(x: 0, y: -Self.stationSize.height / 2 - 11)
             owner.zPosition = 2
             owner.isHidden = true
             node.addChild(owner)
@@ -223,8 +277,16 @@ final class KitchenScene: SKScene {
         chef.strokeColor = ink
         chef.lineWidth = 1.5
         chef.zPosition = 5
-        chef.position = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
+        chef.position = spawnPoint(forColorIndex: index)
         addChild(chef)
+    }
+
+    /// Kick-off position: in the middle of the ring, spread out so four chefs
+    /// don't start stacked on each other. This is the same spot the team has to
+    /// come back to in order to serve — the match ends where it began.
+    private func spawnPoint(forColorIndex index: Int) -> CGPoint {
+        let unit = ServeRitual.spawnUnitPosition(forColorIndex: index)
+        return CGPoint(x: unit.x * size.width, y: unit.y * size.height)
     }
 
     /// Built once. `refreshStations` runs every frame, and allocating a colour
@@ -285,7 +347,10 @@ final class KitchenScene: SKScene {
         node.strokeColor = ink
         node.lineWidth = 1.5
         node.zPosition = 4
-        node.position = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
+        // Start them on their own spawn stone rather than dead centre, so the
+        // first snapshot doesn't drag them across the clearing.
+        let index = session?.player(id)?.colorIndex ?? 1
+        node.position = spawnPoint(forColorIndex: index)
         addChild(node)
         remoteChefs[id] = node
         return node
@@ -346,20 +411,86 @@ final class KitchenScene: SKScene {
         // A station screen is open, so it handles its own touches.
         if stationOverlay != nil { return }
 
+        let point = touch.location(in: self)
+
+        // The SERVE button is checked before the walking guard on purpose: the
+        // press has to land the moment you arrive, and a stray animation still
+        // running must not eat it.
+        if let serveNode, serveNode.buttonContains(point) {
+            serveTouch = touch
+            beginServeHold()
+            return
+        }
+
         // Already walking somewhere.
         if isWalking { return }
 
-        let point = touch.location(in: self)
+        // Tapping the circle walks you into it. It isn't a station — that's the
+        // whole point of it — so it gets its own target.
+        if let serveNode, !serveNode.isHidden, isServeZoneTap(point) {
+            walkToServeZone()
+            return
+        }
+
         if let target = nearestStation(to: point) {
             walk(to: target)
         }
+    }
+
+    /// Sliding the finger off the button counts as letting go. "Keep your thumb
+    /// on it" has to mean the thumb, not the screen.
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard isHoldingServe, let serveTouch, touches.contains(serveTouch),
+              let serveNode else { return }
+        if !serveNode.buttonContains(serveTouch.location(in: self)) {
+            self.serveTouch = nil
+            endServeHold()
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        releaseServeIfNeeded(touches)
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        releaseServeIfNeeded(touches)
+    }
+
+    /// Lifting the finger that was on the button is the whole "let go"
+    /// mechanic, so it has to be the *same* finger — with two hands on the
+    /// screen, releasing the other one must not empty the bar.
+    private func releaseServeIfNeeded(_ touches: Set<UITouch>) {
+        guard let serveTouch, touches.contains(serveTouch) else { return }
+        self.serveTouch = nil
+        endServeHold()
+    }
+
+    private func isServeZoneTap(_ point: CGPoint) -> Bool {
+        guard let serveNode else { return false }
+        let dx = point.x - serveNode.zonePoint.x
+        let dy = point.y - serveNode.zonePoint.y
+        // Barely wider than the circle. Any more and it starts eating the
+        // Table station's own tap radius, which sits just above it.
+        return sqrt(dx * dx + dy * dy) <= ServeRitual.zoneRadius(for: size) + 8
+    }
+
+    /// What can be done at this station right now.
+    ///
+    /// Everything `GameState` offers, minus serving. Serving used to be an
+    /// ordinary action at the oven, which meant one chef could walk over and
+    /// end the game on their own — the exact thing the gather-and-press ritual
+    /// exists to prevent. It now happens only in the middle of the room.
+    private func stationAction(at station: StationID) -> CookAction? {
+        guard let action = state.availableAction(at: station),
+              action.id != ServeRitual.actionID else { return nil }
+        return action
     }
 
     /// Finds the station closest to where the player tapped, if it is
     /// close enough to count.
     private func nearestStation(to point: CGPoint) -> StationID? {
         var best: StationID?
-        var bestDistance: CGFloat = 60
+        var bestDistance: CGFloat = 66
         for (id, position) in stationPoints {
             let dx = position.x - point.x
             let dy = position.y - point.y
@@ -400,6 +531,151 @@ final class KitchenScene: SKScene {
         }
     }
 
+    /// Walk back to your own mark in the middle of the room.
+    ///
+    /// Not to the centre of the circle: everybody heading for the same point
+    /// would pile four chefs on top of each other, and the reason the marks
+    /// exist is so the team can see who has and hasn't come back. You end the
+    /// match on the spot you started it.
+    private func walkToServeZone() {
+        guard serveNode != nil else { return }
+
+        session?.releaseStation()
+        waitingStation = nil
+        lastWaitToastFor = nil
+
+        isWalking = true
+        chefStation = nil
+
+        let destination = spawnPoint(forColorIndex: session?.localPlayer?.colorIndex ?? 0)
+        let dx = destination.x - chef.position.x
+        let dy = destination.y - chef.position.y
+        let duration = TimeInterval(sqrt(dx * dx + dy * dy) / Recipe.chefSpeed)
+
+        chef.removeAllActions()
+        let move = SKAction.move(to: destination, duration: duration)
+        move.timingMode = .easeInEaseOut
+        chef.run(move) { [weak self] in
+            self?.isWalking = false
+        }
+    }
+
+    // MARK: Serving together
+
+    /// Runs every frame. Works out whether this chef is in the circle, tells
+    /// the host, and redraws from whatever the host says the team is doing.
+    private func refreshServe() {
+        guard let serveNode, let serve = ServeRitual.action else { return }
+
+        let unlocked = state.isUnlocked(serve)
+        let dx = chef.position.x - serveNode.zonePoint.x
+        let dy = chef.position.y - serveNode.zonePoint.y
+        let inZone = unlocked && sqrt(dx * dx + dy * dy) <= ServeRitual.zoneRadius(for: size)
+
+        if inZone != isInServeZone {
+            isInServeZone = inZone
+            // Step off your mark and your hold goes with you, finger down or
+            // not. Otherwise you could press and walk away.
+            if !inZone { endServeHold() }
+        }
+        session?.reportServeReady(inZone)
+
+        var look = ServeRitualNode.State()
+        look.unlocked = unlocked
+
+        if let session {
+            // Everything here comes from the host's snapshot. This screen never
+            // works out for itself that the team served — it only reports a
+            // finger going down and coming back up.
+            look.total = max(session.connectedCount, 1)
+            look.gathered = session.snapshot.serveReady.count
+            look.armed = session.snapshot.serveArmed
+            look.holdingCount = session.snapshot.serveHolding.count
+            look.progress = session.snapshot.serveProgress
+
+            // The pressed-in look comes from this device's own finger, not from
+            // the snapshot — a button that waits for a network round trip
+            // before it moves feels broken on the one input that has to feel
+            // immediate.
+            look.holding = isHoldingServe
+
+            // But the *outcome* is still the host's. If it dropped our hold —
+            // somebody stepped off a mark, or we pressed early and the gather
+            // window ran out — let go locally too, so the button pops out and
+            // the player knows they have to press again rather than standing
+            // there with a dead finger on the screen.
+            if isHoldingServe, session.snapshot.serveArmed,
+               !session.snapshot.serveHolding.contains(session.localPlayerID),
+               session.snapshot.serveProgress == 0 {
+                endServeHold()
+                serveNode.nudge()
+                look.holding = false
+            }
+        } else {
+            // Offline there is nobody to be in time with, so holding on your own
+            // mark fills the bar by itself. Same two phases, one player — kept
+            // working so the whole flow can be tested on one device.
+            look.total = 1
+            look.gathered = inZone ? 1 : 0
+            look.armed = unlocked && inZone
+            look.holding = isHoldingServe
+            look.holdingCount = isHoldingServe ? 1 : 0
+
+            if isHoldingServe, look.armed {
+                let now = Date.timeIntervalSinceReferenceDate
+                let startedAt = localChargeStartedAt ?? now
+                localChargeStartedAt = startedAt
+                look.progress = min(1, (now - startedAt) / ServeRitual.chargeDuration)
+
+                if look.progress >= 1 {
+                    state.complete(serve)
+                    endServeHold()
+                    showToast("Served!")
+                }
+            } else {
+                localChargeStartedAt = nil
+            }
+        }
+
+        serveNode.apply(look)
+    }
+
+    /// Finger down on the button.
+    ///
+    /// Nothing is decided here. The hold is *reported*; whether it turns into a
+    /// served cake depends on everyone else's finger being down at the same
+    /// time, which only the host can see.
+    private func beginServeHold() {
+        guard let serveNode, let serve = ServeRitual.action,
+              state.isUnlocked(serve) else { return }
+
+        guard isInServeZone else {
+            showToast("Get back on your mark first")
+            serveNode.nudge()
+            return
+        }
+
+        if let session {
+            guard session.snapshot.serveArmed else {
+                showToast("Wait for the whole kitchen to gather")
+                serveNode.nudge()
+                return
+            }
+            session.setServeHold(true)
+        }
+
+        isHoldingServe = true
+    }
+
+    /// Finger up — or the chef wandered off, or the game ended underneath us.
+    private func endServeHold() {
+        guard isHoldingServe else { return }
+        isHoldingServe = false
+        serveTouch = nil
+        localChargeStartedAt = nil
+        session?.setServeHold(false)
+    }
+
     private func arrive(at station: StationID) {
         chefStation = station
 
@@ -410,8 +686,16 @@ final class KitchenScene: SKScene {
         }
 
         // The recipe itself says no — nothing to queue for.
-        guard let action = state.availableAction(at: station) else {
-            showToast(state.blockReason(at: station))
+        guard let action = stationAction(at: station) else {
+            // Serving used to happen here, and `blockReason` still thinks it
+            // does — it would say "Not ready yet" to someone holding a
+            // finished cake. Point them at the middle of the room instead.
+            if let serve = ServeRitual.action, station == serve.station,
+               state.isUnlocked(serve) {
+                showToast("Take it to the middle — everyone serves together")
+            } else {
+                showToast(state.blockReason(at: station))
+            }
             return
         }
 
@@ -473,7 +757,7 @@ final class KitchenScene: SKScene {
 
         // Whoever was in there may have completed the very action we queued
         // for, in which case there is nothing left to wait around for.
-        guard state.availableAction(at: waiting) != nil else {
+        guard stationAction(at: waiting) != nil else {
             waitingStation = nil
             lastWaitToastFor = nil
             session.releaseStation()
@@ -490,7 +774,7 @@ final class KitchenScene: SKScene {
             return
         }
 
-        if session.heldStation == waiting, let action = state.availableAction(at: waiting) {
+        if session.heldStation == waiting, let action = stationAction(at: waiting) {
             waitingStation = nil
             lastWaitToastFor = nil
             openStation(action)
@@ -609,6 +893,10 @@ final class KitchenScene: SKScene {
         hudMess.isHidden = hidden
         toast.isHidden = hidden
         for label in checklistLabels.values { label.isHidden = hidden }
+        // Only ever hides. Whether the ritual is visible at all is decided by
+        // `refreshServe` from the recipe state, and letting this un-hide it
+        // would flash the serve zone for a frame before the cake exists.
+        if hidden { serveNode?.isHidden = true }
     }
 
     // MARK: Loop
@@ -643,7 +931,10 @@ final class KitchenScene: SKScene {
         // Picking a knife off the shelf has to show up in the hand without the
         // storage screen having to reach in here. `setItems` diffs internally,
         // so an unchanged hand costs two optional comparisons a frame.
-        if stationOverlay == nil { refreshHands() }
+        if stationOverlay == nil {
+            refreshHands()
+            refreshServe()
+        }
 
         refreshHUD()
 
@@ -684,7 +975,7 @@ final class KitchenScene: SKScene {
     private func refreshStations() {
         for (id, node) in stationNodes {
             let owner = session?.occupant(of: id)
-            let ready = id == .storage || state.availableAction(at: id) != nil
+            let ready = id == .storage || stationAction(at: id) != nil
             let key = owner.map { "busy:\($0.id):\($0.colorIndex)" } ?? "free:\(ready)"
             if stationLooks[id] == key { continue }
             stationLooks[id] = key
@@ -703,11 +994,14 @@ final class KitchenScene: SKScene {
                     ? "you're here"
                     : "\(owner.name) is here"
             } else {
-                node.fillColor = .clear
-                node.strokeColor = ready
-                    ? SKColor(red: 0.15, green: 0.55, blue: 0.30, alpha: 1)
-                    : SKColor(white: 0.72, alpha: 1)
-                node.lineWidth = ready ? 2.5 : 1.5
+                // Free. "Ready" is a filled green tint rather than a slightly
+                // greener outline — at arm's length on a phone, line weight is
+                // not a signal anyone reads.
+                node.fillColor = ready
+                    ? readyColour.withAlphaComponent(0.18)
+                    : counterColour
+                node.strokeColor = ready ? readyColour : counterEdge
+                node.lineWidth = ready ? 4 : 2.5
                 label?.isHidden = true
             }
         }
@@ -730,6 +1024,7 @@ final class KitchenScene: SKScene {
         // discard the action, which could turn a win into a loss.
         stationOverlay?.announceFinish()
         closeStation()
+        endServeHold()
 
         // Nobody is holding anything once the service is over, and no white
         // wipe over the results card.
@@ -776,9 +1071,11 @@ final class KitchenScene: SKScene {
         lastWaitToastFor = nil
         isWalking = false
         chef.removeAllActions()
-        chef.position = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
+        chef.position = spawnPoint(forColorIndex: session?.localPlayer?.colorIndex ?? 0)
 
         carriedPrep = nil
+        isInServeZone = false
+        endServeHold()
         inventory?.clear()
         localDeposited.removeAll()
         cancelFlash()

@@ -58,7 +58,7 @@ private enum GatingTests {
         // 3) Make dough needs ALL five + mixer.
         do {
             let bowl = Station(type: .bowl)
-            [.siftedFlour, .meltedButter, .beatenEgg, .sugar].forEach {
+            [.siftedFlour, .meltedButter, .crackedEgg, .sugar].forEach {
                 GatingEngine.deposit(FoodItem(id: $0), into: bowl)
             }
             expect("Dough not ready with only 4 of 5",

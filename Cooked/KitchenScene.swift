@@ -30,15 +30,38 @@ final class KitchenScene: SKScene {
     /// inventory bar would sit over the station screen showing the same two
     /// slots the hands were hidden to get out of the way.
     var onHeadsDownChanged: ((Bool) -> Void)?
+
+    /// Called when the chef reaches any other station — SwiftUI shows the
+    /// station popup (drop/pick-up vs do-action). The scene no longer opens the
+    /// minigame itself; `beginAction` does, once the popup asks it to.
+    var onArriveStation: ((StationID) -> Void)?
+
+    /// The action a chef chose from the popup and is now queueing for. Kept so
+    /// the grant opens *that* action, not just whatever `availableAction` picks
+    /// first (bowls offer several).
+    private var pendingAction: CookAction?
+
+    /// Called when a producing action finishes — SwiftUI shows the "you got a
+    /// prep" result popup (station id + the produced foodID).
+    var onActionFinished: ((StationID, String) -> Void)?
     /// Ingredients deposited per station when playing offline (no session). In a
     /// networked game the host owns this via the snapshot instead.
     private var localDeposited: [StationID: Set<String>] = [:]
+
+    /// Finished prep sitting on a station when playing offline (no session).
+    private var localOutput: [StationID: String] = [:]
 
     /// What's been dropped at a station — from the snapshot if networked, else
     /// the local store.
     private func depositedFoods(at station: StationID) -> Set<String> {
         if let session { return Set(session.snapshot.depositedFoods(at: station)) }
         return localDeposited[station] ?? []
+    }
+
+    /// The finished prep on a station (snapshot if networked, else local).
+    private func outputFood(at station: StationID) -> String? {
+        if let session { return session.outputFood(at: station) }
+        return localOutput[station]
     }
 
     /// Drop an ingredient at a station (host-authoritative when networked).
@@ -409,37 +432,35 @@ final class KitchenScene: SKScene {
             return
         }
 
-        // The recipe itself says no — nothing to queue for.
-        guard let action = state.availableAction(at: station) else {
-            showToast(state.blockReason(at: station))
+        // Every other station now shows the SwiftUI popup (drop/pick-up vs do
+        // action). The popup calls back into `beginAction` if the chef acts.
+        onArriveStation?(station)
+    }
+
+    /// Start a specific action the chef picked from the station popup. Runs the
+    /// gate (station not blocked by a leftover prep, all ingredients deposited,
+    /// right utensil) then opens the minigame — directly offline, or via the
+    /// host's station lock in a networked game.
+    func beginAction(_ action: CookAction) {
+        // A finished prep on the station blocks new work until it's collected.
+        if outputFood(at: action.station) != nil {
+            showToast("Clear the \(GatingBridge.displayName(outputFood(at: action.station)!)) first")
             return
         }
 
-        // Deposit: if the chef is holding a raw ingredient this action still
-        // needs, drop it here and stop. (Host-authoritative in a networked game.)
         let need = GatingBridge.requiredIngredients(for: action)
-        let have = depositedFoods(at: station)
-        if let ing = inventory?.ingredient, need.contains(ing.id), !have.contains(ing.id) {
-            deposit(ing.id, at: station)
-            inventory?.dropIngredient()
-            showToast("Dropped \(ing.name)")
-            refreshStations()
-            return
-        }
-
-        // Gate: every required ingredient must be deposited first.
-        let missing = need.subtracting(have)
+        let missing = need.subtracting(depositedFoods(at: action.station))
         if !missing.isEmpty {
-            showToast("Need: " + missing.map { $0.capitalized }.sorted().joined(separator: ", "))
+            showToast("Need: " + missing.map { GatingBridge.displayName($0) }.sorted().joined(separator: ", "))
             return
         }
 
-        // Gating seam: also require the correct utensil in hand before opening
-        // (or queueing for) the station.
         if let block = GatingBridge.blockReason(for: action, holding: inventory) {
             showToast(block)
             return
         }
+
+        pendingAction = action
 
         // Offline: nobody to share the kitchen with.
         guard let session else {
@@ -447,12 +468,10 @@ final class KitchenScene: SKScene {
             return
         }
 
-        // Networked: ask the host for the station and stand here until it says
-        // yes. `resolveWaiting` opens the screen when the answer arrives, which
-        // may be immediately or may be after the current occupant walks off.
-        waitingStation = station
+        // Networked: claim the station and wait for the host's grant.
+        waitingStation = action.station
         lastWaitToastFor = nil
-        session.claimStation(station)
+        session.claimStation(action.station)
     }
 
     /// Runs every frame while queueing. Handles the three things that can
@@ -490,9 +509,11 @@ final class KitchenScene: SKScene {
             return
         }
 
-        if session.heldStation == waiting, let action = state.availableAction(at: waiting) {
+        if session.heldStation == waiting,
+           let action = pendingAction ?? state.availableAction(at: waiting) {
             waitingStation = nil
             lastWaitToastFor = nil
+            pendingAction = nil
             openStation(action)
         } else if let occupant = session.occupant(of: waiting),
                   occupant.id != session.localPlayerID,
@@ -545,8 +566,9 @@ final class KitchenScene: SKScene {
                 session.reportCompletion(actionID: action.id)
             } else {
                 self.state.complete(action)
-                // Offline: the deposited ingredients are consumed by the action.
+                // Offline: consume the deposits and leave the prep on the station.
                 self.localDeposited[action.station] = nil
+                if let out = action.output { self.localOutput[action.station] = out }
             }
 
             // Walk out holding what you just made. Visual only — see
@@ -554,7 +576,13 @@ final class KitchenScene: SKScene {
             self.carriedPrep = RecipeBook.carriedResult(forActionID: action.id)
 
             self.closeStation(rewarding: true)
-            self.showToast("\(action.name) — done")
+            // A producing action shows the "you got a prep" result popup; a
+            // non-producing one (pre-heat, serve) just toasts.
+            if let out = action.output {
+                self.onActionFinished?(action.station, out)
+            } else {
+                self.showToast("\(action.name) — done")
+            }
         }
 
         addChild(overlay)

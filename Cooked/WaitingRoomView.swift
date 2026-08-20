@@ -28,15 +28,18 @@ struct WaitingRoomView: View {
         ZStack {
             AppTheme.background
 
-            VStack(spacing: 24) {
-                header
-                if session.isHost { codeCard }
-                panel
-                startButton
+            ScrollView {
+                VStack(spacing: 24) {
+                    header
+                    if session.isHost { codeCard }
+                    panel
+                    startButton
+                }
+                .frame(maxWidth: 560)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 40)
+                .padding(.vertical, 32)
             }
-            .frame(maxWidth: 560)
-            .padding(.horizontal, 40)
-            .padding(.vertical, 32)
 
             VStack {
                 HStack {

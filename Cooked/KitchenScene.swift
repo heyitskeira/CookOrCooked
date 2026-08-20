@@ -114,6 +114,16 @@ final class KitchenScene: SKScene {
         refreshStations()
     }
 
+    /// The scene is going away — the host quit, the player backed out, SwiftUI
+    /// rebuilt the view. Anything a station screen was holding onto has to be
+    /// handed back here, because `closeStation` is never reached on this path:
+    /// the melt station owns the microphone, and leaving it owned means the
+    /// music stays ducked to a whisper for the rest of the app's life.
+    override func willMove(from view: SKView) {
+        super.willMove(from: view)
+        stationOverlay?.cleanUp()
+    }
+
     private func buildHands() {
         // `didMove` can run more than once for the same scene, and a second set
         // of hands would be orphaned on screen forever.

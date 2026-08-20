@@ -31,9 +31,6 @@ struct RecipeBookView: View {
     /// side of the screen without needing a second device in the room.
     var headChefOverride: Bool?
 
-    /// The step whose instruction card is open, if any.
-    @State private var openStep: BookStep?
-
     /// Leaving kills the kitchen for everyone, so it asks first.
     @State private var confirmLeave = false
 
@@ -50,19 +47,12 @@ struct RecipeBookView: View {
 
                 VStack(spacing: compact ? 8 : 14) {
                     banner(compact: compact)
-                    spread(compact: compact)
+                    RecipeSpreadView(session: session, headChefOverride: headChefOverride, compact: compact)
                 }
                 .padding(.horizontal, compact ? 76 : 96)
                 .padding(.vertical, compact ? 10 : 18)
 
                 corners
-
-                if let step = openStep {
-                    InstructionCard(step: step) {
-                        withAnimation(.easeOut(duration: 0.15)) { openStep = nil }
-                    }
-                    .transition(.opacity.combined(with: .scale(scale: 0.94)))
-                }
 
                 // The host can vanish while the book is open — and this is the
                 // longest pre-game pause there is, so it will happen. Without
@@ -158,36 +148,146 @@ struct RecipeBookView: View {
         .shadow(color: .black.opacity(0.35), radius: 8, x: 0, y: 5)
     }
 
-    // MARK: The book
+    // MARK: Back button and signpost
 
-    private func spread(compact: Bool) -> some View {
-        HStack(spacing: 0) {
-            page {
-                if isHeadChef { headChefPage(RecipeBook.leftPage, compact: compact) }
-                else { waitingPage }
+    private var corners: some View {
+        VStack {
+            HStack {
+                backButton
+                Spacer()
             }
-
-            // The spine. A seam of shadow does more for "this is a book" than
-            // any amount of page curl.
-            LinearGradient(colors: [.clear, AppTheme.ink.opacity(0.35), .clear],
-                           startPoint: .leading, endPoint: .trailing)
-                .frame(width: 22)
-
-            page {
-                if isHeadChef { headChefPage(RecipeBook.rightPage, compact: compact) }
-                else { dottedLines(count: 8) }
+            Spacer()
+            HStack {
+                Spacer()
+                startControl
             }
         }
-        .padding(compact ? 12 : 18)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(red: 0.45, green: 0.31, blue: 0.19))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color(red: 0.28, green: 0.18, blue: 0.10), lineWidth: 5)
-        )
-        .shadow(color: .black.opacity(0.4), radius: 14, x: 0, y: 8)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+    }
+
+    private var backButton: some View {
+        // Only `session.leave()` — no `dismiss()`. The waiting room is watching
+        // for `.idle` and closes this cover itself; doing both would tear down
+        // two stacked covers in the same update and wedge the presentation.
+        Button {
+            confirmLeave = true
+        } label: {
+            ZStack {
+                if let art = namedImage("back-button") {
+                    Image(uiImage: art).resizable().scaledToFit()
+                } else {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(red: 0.45, green: 0.31, blue: 0.19))
+                        .overlay(
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.system(size: 22, weight: .heavy))
+                                .foregroundStyle(AppTheme.cream)
+                        )
+                }
+            }
+            .frame(width: 56, height: 56)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Leave kitchen")
+    }
+
+    @ViewBuilder
+    private var startControl: some View {
+        if isHeadChef {
+            Button {
+                session.beginCooking()
+            } label: {
+                Text("START")
+                    .font(.system(size: 26, weight: .heavy, design: .rounded))
+                    .foregroundStyle(AppTheme.cream)
+                    .shadow(color: .black.opacity(0.45), radius: 0, x: 0, y: 2)
+                    .padding(.leading, 22)
+                    .padding(.trailing, 30)
+                    .padding(.vertical, 12)
+                    .background(Signpost().fill(Color(red: 0.45, green: 0.31, blue: 0.19)))
+                    .overlay(Signpost().stroke(Color(red: 0.28, green: 0.18, blue: 0.10),
+                                               lineWidth: 4))
+                    .shadow(color: .black.opacity(0.35), radius: 8, x: 0, y: 5)
+            }
+            .buttonStyle(.plain)
+        } else {
+            HStack(spacing: 10) {
+                ProgressView().tint(AppTheme.cream)
+                Text("Head chef is reading…")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(AppTheme.cream)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
+            .background(Capsule().fill(.black.opacity(0.45)))
+        }
+    }
+
+    // MARK: Art lookup
+
+    /// Real artwork if the imageset exists, nil to fall back to a drawn stand-in.
+    private func namedImage(_ name: String) -> UIImage? { FoodArt.art(name) }
+}
+
+// MARK: - The book's pages, on their own
+//
+// Pulled out of RecipeBookView so it can be shown by itself — KitchenGameView
+// wants the open pages as a reviewable mid-match overlay, without the
+// backdrop, back button, or START signpost that only make sense on the
+// pre-game screen. RecipeBookView uses this struct for its own book too, so
+// there's exactly one place the pages are drawn, not two copies to keep in
+// sync.
+struct RecipeSpreadView: View {
+
+    @ObservedObject var session: KitchenSession
+    /// Previews and on-device testing only — see the same property on
+    /// `RecipeBookView`.
+    var headChefOverride: Bool?
+    var compact: Bool = false
+
+    /// The step whose instruction card is open, if any.
+    @State private var openStep: BookStep?
+
+    private var isHeadChef: Bool { headChefOverride ?? session.isHeadChef }
+
+    var body: some View {
+        ZStack {
+            HStack(spacing: 0) {
+                page {
+                    if isHeadChef { headChefPage(RecipeBook.leftPage, compact: compact) }
+                    else { waitingPage }
+                }
+
+                // The spine. A seam of shadow does more for "this is a book" than
+                // any amount of page curl.
+                LinearGradient(colors: [.clear, AppTheme.ink.opacity(0.35), .clear],
+                               startPoint: .leading, endPoint: .trailing)
+                    .frame(width: 22)
+
+                page {
+                    if isHeadChef { headChefPage(RecipeBook.rightPage, compact: compact) }
+                    else { dottedLines(count: 8) }
+                }
+            }
+            .padding(compact ? 12 : 18)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color(red: 0.45, green: 0.31, blue: 0.19))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color(red: 0.28, green: 0.18, blue: 0.10), lineWidth: 5)
+            )
+            .shadow(color: .black.opacity(0.4), radius: 14, x: 0, y: 8)
+
+            if let step = openStep {
+                InstructionCard(step: step) {
+                    withAnimation(.easeOut(duration: 0.15)) { openStep = nil }
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.94)))
+            }
+        }
     }
 
     private func page<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
@@ -282,87 +382,6 @@ struct RecipeBookView: View {
         }
         .frame(maxHeight: .infinity)
     }
-
-    // MARK: Back button and signpost
-
-    private var corners: some View {
-        VStack {
-            HStack {
-                backButton
-                Spacer()
-            }
-            Spacer()
-            HStack {
-                Spacer()
-                startControl
-            }
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
-    }
-
-    private var backButton: some View {
-        // Only `session.leave()` — no `dismiss()`. The waiting room is watching
-        // for `.idle` and closes this cover itself; doing both would tear down
-        // two stacked covers in the same update and wedge the presentation.
-        Button {
-            confirmLeave = true
-        } label: {
-            ZStack {
-                if let art = namedImage("back-button") {
-                    Image(uiImage: art).resizable().scaledToFit()
-                } else {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color(red: 0.45, green: 0.31, blue: 0.19))
-                        .overlay(
-                            Image(systemName: "arrow.uturn.backward")
-                                .font(.system(size: 22, weight: .heavy))
-                                .foregroundStyle(AppTheme.cream)
-                        )
-                }
-            }
-            .frame(width: 56, height: 56)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Leave kitchen")
-    }
-
-    @ViewBuilder
-    private var startControl: some View {
-        if isHeadChef {
-            Button {
-                session.beginCooking()
-            } label: {
-                Text("START")
-                    .font(.system(size: 26, weight: .heavy, design: .rounded))
-                    .foregroundStyle(AppTheme.cream)
-                    .shadow(color: .black.opacity(0.45), radius: 0, x: 0, y: 2)
-                    .padding(.leading, 22)
-                    .padding(.trailing, 30)
-                    .padding(.vertical, 12)
-                    .background(Signpost().fill(Color(red: 0.45, green: 0.31, blue: 0.19)))
-                    .overlay(Signpost().stroke(Color(red: 0.28, green: 0.18, blue: 0.10),
-                                               lineWidth: 4))
-                    .shadow(color: .black.opacity(0.35), radius: 8, x: 0, y: 5)
-            }
-            .buttonStyle(.plain)
-        } else {
-            HStack(spacing: 10) {
-                ProgressView().tint(AppTheme.cream)
-                Text("Head chef is reading…")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(AppTheme.cream)
-            }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 10)
-            .background(Capsule().fill(.black.opacity(0.45)))
-        }
-    }
-
-    // MARK: Art lookup
-
-    /// Real artwork if the imageset exists, nil to fall back to a drawn stand-in.
-    private func namedImage(_ name: String) -> UIImage? { FoodArt.art(name) }
 }
 
 // MARK: - The instruction card (image + image = image)

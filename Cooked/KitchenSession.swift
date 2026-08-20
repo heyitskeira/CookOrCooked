@@ -422,6 +422,29 @@ final class KitchenSession: ObservableObject {
         isHost ? stationOutput[station.rawValue] : snapshot.outputFood(at: station)
     }
 
+    /// Ingredients dropped at a station so far (host table / guest snapshot).
+    func depositedFoods(at station: StationID) -> [String] {
+        isHost ? (deposited[station.rawValue] ?? []) : snapshot.depositedFoods(at: station)
+    }
+
+    /// Take one previously-dropped ingredient back off a station (into hand).
+    @discardableResult
+    func takeDeposit(_ foodID: String, at station: StationID) -> Bool {
+        guard depositedFoods(at: station).contains(foodID) else { return false }
+        if isHost || phase != .playing {
+            takeDepositFood(foodID, at: station.rawValue)
+        } else if let hostPeer {
+            transport.send(.takeDeposit(station: station.rawValue, foodID: foodID), to: hostPeer)
+        }
+        return true
+    }
+
+    private func takeDepositFood(_ foodID: String, at station: String) {
+        guard let idx = deposited[station]?.firstIndex(of: foodID) else { return }
+        deposited[station]?.remove(at: idx)
+        if deposited[station]?.isEmpty == true { deposited[station] = nil }
+    }
+
     /// Consumed by StorageView once it has acted on a grant/out reply.
     func clearUtensilReply() { utensilReply = nil }
 
@@ -623,6 +646,10 @@ final class KitchenSession: ObservableObject {
         case .pickUpOutput(let station):
             guard isHost else { return }
             stationOutput[station] = nil
+
+        case .takeDeposit(let station, let foodID):
+            guard isHost else { return }
+            takeDepositFood(foodID, at: station)
 
         // ---- guest side ----
 

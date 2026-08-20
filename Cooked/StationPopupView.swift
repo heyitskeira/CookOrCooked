@@ -40,6 +40,11 @@ struct StationPopupView: View {
         }
     }
 
+    /// Raw storage ingredients (everything else is a prep, which locks the hand).
+    private func isRaw(_ id: String) -> Bool {
+        ["strawberries", "cream", "butter", "egg", "flour", "sugar"].contains(id)
+    }
+
     private func canDo(_ action: CookAction) -> Bool {
         guard output == nil else { return false }                      // blocked by leftover prep
         guard GatingBridge.requiredIngredients(for: action).isSubset(of: deposited) else { return false }
@@ -83,6 +88,24 @@ struct StationPopupView: View {
                         onClose()
                     }
                 }
+                // Take back something you'd dropped here (only when no finished
+                // prep is blocking the station).
+                if output == nil {
+                    ForEach(deposited.sorted(), id: \.self) { food in
+                        prepButton(title: "Pick up \(GatingBridge.displayName(food))", icon: "hand.raised") {
+                            if inventory.isHoldingPrep {
+                                alert = "You already held on to a prep!"
+                                return
+                            }
+                            if session.takeDeposit(food, at: station) {
+                                inventory.pickUp(HeldIngredient(id: food,
+                                                                name: GatingBridge.displayName(food),
+                                                                isPrep: !isRaw(food)))
+                            }
+                            onClose()
+                        }
+                    }
+                }
                 if let drop = depositable {
                     prepButton(title: "Drop \(drop.name)", icon: "tray.and.arrow.down.fill") {
                         session.deposit(drop.id, at: station)
@@ -97,8 +120,9 @@ struct StationPopupView: View {
                     actionButton(action)
                 }
 
-                // Only truly empty — no action, nothing to pick up, nothing to drop.
-                if candidates.isEmpty && output == nil && depositable == nil {
+                // Only truly empty — no action, nothing to pick up or take back,
+                // nothing to drop.
+                if candidates.isEmpty && output == nil && depositable == nil && deposited.isEmpty {
                     Text("Nothing to do here right now")
                         .font(.system(size: 15, weight: .semibold, design: .rounded))
                         .foregroundStyle(AppTheme.ink.opacity(0.5))

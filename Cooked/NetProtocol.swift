@@ -159,6 +159,9 @@ nonisolated enum NetMessage: Codable {
     /// "I'm taking the finished prep off this station into my hands." The host
     /// clears the station's output; the prep goes into the guest's local hand.
     case pickUpOutput(station: String)
+    /// "I'm taking one ingredient I'd dropped back off this station." The host
+    /// removes that foodID from the station's deposits; it goes back into hand.
+    case takeDeposit(station: String, foodID: String)
 
     // host -> guest
     case queued(position: Int)

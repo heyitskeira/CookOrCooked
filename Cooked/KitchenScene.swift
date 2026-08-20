@@ -878,10 +878,6 @@ final class KitchenScene: SKScene {
                 if let out = action.output { self.localOutput[action.station] = out }
             }
 
-            // Walk out holding what you just made. Visual only — see
-            // `carriedPrep`.
-            self.carriedPrep = RecipeBook.carriedResult(forActionID: action.id)
-
             self.closeStation(rewarding: true)
             // A producing action shows the "you got a prep" result popup; a
             // non-producing one (pre-heat, serve) just toasts.

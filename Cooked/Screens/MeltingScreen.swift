@@ -12,6 +12,7 @@
 //
 
 import SpriteKit
+import SwiftUI
 
 
 class MeltOverlay: StationOverlay {

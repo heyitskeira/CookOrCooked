@@ -20,6 +20,7 @@
 
 import SpriteKit
 import AVFoundation
+import SwiftUI
 
 
 class BlowMeltOverlay: StationOverlay {

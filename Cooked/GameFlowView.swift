@@ -35,5 +35,20 @@ struct GameFlowView: View {
             }
         }
         .animation(.easeInOut(duration: 0.25), value: session.phase)
+        // The music changes on START, not on the lobby. The recipe book is
+        // deliberately on the menu side of the line: the track swapping under
+        // you *is* the match beginning.
+        //
+        // `initial: true` matters for the same reason it does in the waiting
+        // room — a guest admitted to a game already running arrives with the
+        // phase already at .playing.
+        .onChange(of: session.phase, initial: true) { _, phase in
+            Music.shared.play(phase == .playing ? .kitchen : .menu)
+        }
+        .onDisappear {
+            // Backing out to the start screen, or the host closing the
+            // kitchen. Either way we're out of the match.
+            Music.shared.play(.menu)
+        }
     }
 }

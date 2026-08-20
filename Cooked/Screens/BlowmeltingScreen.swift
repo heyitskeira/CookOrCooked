@@ -131,18 +131,29 @@ class BlowMeltOverlay: StationOverlay {
     // LISTENING TO THE MICROPHONE
     // ---------------------------------------------------------------
 
+    /// Set once `cleanUp()` has run, so a permission answer that arrives after
+    /// the screen has gone doesn't start a recorder — and doesn't duck the
+    /// music with nothing left alive to un-duck it.
+    private var isFinishedWithMic = false
+
     func startListening() {
-        // Ask the player for permission the first time.
+        // Ask the player for permission the first time. The alert sits on top
+        // of a running two-minute clock, so the answer can easily arrive after
+        // the round has ended or the host has taken the station back.
         AVAudioApplication.requestRecordPermission { granted in
-            if granted {
-                DispatchQueue.main.async {
-                    self.beginRecording()
-                }
-            }
+            guard granted else { return }
+            Task { @MainActor in self.beginRecording() }
         }
     }
 
     func beginRecording() {
+        guard !isFinishedWithMic, parent != nil else { return }
+
+        // Duck the music first. The speaker is loud enough to register on this
+        // screen's own microphone, which would melt the butter with nobody
+        // breathing on the phone.
+        Music.shared.willUseMicrophone()
+
         // Tell iOS we want to use the microphone.
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playAndRecord, mode: .measurement,
@@ -166,9 +177,15 @@ class BlowMeltOverlay: StationOverlay {
     }
 
     override func cleanUp() {
+        isFinishedWithMic = true
         recorder?.stop()
         recorder = nil
-        try? AVAudioSession.sharedInstance().setActive(false)
+
+        // This used to be `setActive(false)`, which switches the whole app's
+        // audio off — the background music never came back for the rest of the
+        // match. Music owns the session; it puts the category back to playback
+        // and un-ducks.
+        Music.shared.didFinishWithMicrophone()
     }
 
     // ---------------------------------------------------------------

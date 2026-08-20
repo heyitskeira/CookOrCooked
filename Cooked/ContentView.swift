@@ -23,6 +23,8 @@ struct ContentView: View {
     // Storage pantry overlay + the shared inventory it fills (Kitchen map only).
     @State private var showStorage = false
     @State private var showDrawer = false
+    // Rot in hand blocks every tap but the bin; the map asks for this alert.
+    @State private var showRottenAlert = false
     @StateObject private var inventory = PlayerInventory()
     @StateObject private var pantry = StoragePantry()
     @StateObject private var drawerBox = DrawerBox()
@@ -69,6 +71,13 @@ struct ContentView: View {
                         StorageView(inventory: inventory, pantry: pantry, onClose: {
                             withAnimation(.easeInOut(duration: 0.2)) { showStorage = false }
                         })
+                        .transition(.opacity)
+                    }
+
+                    if showRottenAlert {
+                        PrepHeldAlert(message: Rotten.blockedMessage, emoji: Rotten.emoji) {
+                            withAnimation(.easeInOut(duration: 0.15)) { showRottenAlert = false }
+                        }
                         .transition(.opacity)
                     }
 
@@ -160,6 +169,9 @@ struct ContentView: View {
                         }
                         scene.onOpenDrawer = {
                             withAnimation(.easeInOut(duration: 0.2)) { showDrawer = true }
+                        }
+                        scene.onRottenBlocked = {
+                            withAnimation(.easeInOut(duration: 0.15)) { showRottenAlert = true }
                         }
                         activeScene = scene
                     }

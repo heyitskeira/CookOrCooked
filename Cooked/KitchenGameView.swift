@@ -33,6 +33,8 @@ struct KitchenGameView: View {
     @State private var activeStation: StationID?
     // The prep just produced, awaiting the "hands vs station" choice.
     @State private var finishedPrep: PrepResult?
+    // Raised when a chef carrying rot taps anywhere but the bin.
+    @State private var showRottenAlert = false
 
     var body: some View {
         GeometryReader { geo in
@@ -86,6 +88,14 @@ struct KitchenGameView: View {
                     .transition(.opacity)
                 }
 
+                if showRottenAlert {
+                    PrepHeldAlert(message: Rotten.blockedMessage, emoji: Rotten.emoji) {
+                        withAnimation(.easeInOut(duration: 0.15)) { showRottenAlert = false }
+                    }
+                    .transition(.opacity)
+                    .zIndex(1)
+                }
+
                 // Win/lose result once the game ends. Reads the synced snapshot.
                 if session.snapshot.isOver {
                     EndGameResultsView(
@@ -127,6 +137,9 @@ struct KitchenGameView: View {
         }
         made.onArriveStation = { station in
             withAnimation(.easeInOut(duration: 0.15)) { activeStation = station }
+        }
+        made.onRottenBlocked = {
+            withAnimation(.easeInOut(duration: 0.15)) { showRottenAlert = true }
         }
         made.onActionFinished = { station, foodID in
             withAnimation(.easeInOut(duration: 0.15)) {

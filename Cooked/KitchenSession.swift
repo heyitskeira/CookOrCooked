@@ -152,6 +152,9 @@ final class KitchenSession: ObservableObject {
     /// which is the entire spike-defuse feel.
     private var serveChargeStartedAt: TimeInterval?
 
+    /// station rawValue -> the finished prep sitting on it, waiting for pickup.
+    /// A station with an entry here is blocked until the prep is taken.
+    private var stationOutput: [String: String] = [:]
     private var chefs: [String: ChefSnapshot] = [:]
     private var peerToPlayer: [PeerID: String] = [:]
     private var playerToPeer: [String: PeerID] = [:]
@@ -384,7 +387,7 @@ final class KitchenSession: ObservableObject {
 
         if isHost {
             guard let action = Recipe.action(actionID) else { return }
-            game.complete(action)
+            applyCompletion(action, claimant: localPlayerID)
         } else if let hostPeer {
             transport.send(.finishedAction(id: actionID), to: hostPeer)
         }
@@ -535,6 +538,21 @@ final class KitchenSession: ObservableObject {
         return min(1, max(0, elapsed / ServeRitual.chargeDuration))
     }
 
+    /// Host-authoritative completion — used whether the host itself finished the
+    /// action or a guest reported it. Marks it done, consumes the deposits,
+    /// leaves the prep on the station, and frees the station lock.
+    private func applyCompletion(_ action: CookAction, claimant: String?) {
+        guard isHost else { return }
+        game.complete(action)
+        deposited[action.station.rawValue] = nil
+        if let output = action.output {
+            stationOutput[action.station.rawValue] = output
+        }
+        if let claimant, occupancy[action.station.rawValue] == claimant {
+            occupancy.removeValue(forKey: action.station.rawValue)
+        }
+    }
+
     // MARK: Station locks
     //
     // One player per station. The host owns the lock table, so two chefs
@@ -604,6 +622,48 @@ final class KitchenSession: ObservableObject {
         } else if let hostPeer {
             transport.send(.deposit(station: station.rawValue, foodID: foodID), to: hostPeer)
         }
+    }
+
+    /// Take the finished prep off a station (into the caller's hand). Returns
+    /// the foodID that was there, or nil if the station was empty.
+    @discardableResult
+    func pickUpOutput(at station: StationID) -> String? {
+        let food = outputFood(at: station)
+        guard food != nil else { return nil }
+        if isHost || phase != .playing {
+            stationOutput[station.rawValue] = nil
+        } else if let hostPeer {
+            transport.send(.pickUpOutput(station: station.rawValue), to: hostPeer)
+        }
+        return food
+    }
+
+    /// The prep waiting on a station (host reads its table; guest the snapshot).
+    func outputFood(at station: StationID) -> String? {
+        isHost ? stationOutput[station.rawValue] : snapshot.outputFood(at: station)
+    }
+
+    /// Ingredients dropped at a station so far (host table / guest snapshot).
+    func depositedFoods(at station: StationID) -> [String] {
+        isHost ? (deposited[station.rawValue] ?? []) : snapshot.depositedFoods(at: station)
+    }
+
+    /// Take one previously-dropped ingredient back off a station (into hand).
+    @discardableResult
+    func takeDeposit(_ foodID: String, at station: StationID) -> Bool {
+        guard depositedFoods(at: station).contains(foodID) else { return false }
+        if isHost || phase != .playing {
+            takeDepositFood(foodID, at: station.rawValue)
+        } else if let hostPeer {
+            transport.send(.takeDeposit(station: station.rawValue, foodID: foodID), to: hostPeer)
+        }
+        return true
+    }
+
+    private func takeDepositFood(_ foodID: String, at station: String) {
+        guard let idx = deposited[station]?.firstIndex(of: foodID) else { return }
+        deposited[station]?.remove(at: idx)
+        if deposited[station]?.isEmpty == true { deposited[station] = nil }
     }
 
     /// Consumed by StorageView once it has acted on a grant/out reply.
@@ -804,6 +864,7 @@ final class KitchenSession: ObservableObject {
         shot.serveArmed = serveIsArmed
         shot.serveHolding = Array(serveHolds.keys)
         shot.serveProgress = serveProgress
+        shot.stationOutput = stationOutput
         snapshot = shot
         transport.broadcast(.snapshot(shot))
         if game.isOver {
@@ -869,16 +930,7 @@ final class KitchenSession: ObservableObject {
             // `resolveServe` and nowhere else.
             guard id != ServeRitual.actionID else { return }
             guard isHost, let action = Recipe.action(id) else { return }
-            game.complete(action)
-            // The ingredients that were dropped in are consumed by the action.
-            deposited[action.station.rawValue] = nil
-            // Free the station immediately rather than waiting for the guest's
-            // own release to arrive — a completed action always ends the visit,
-            // and a packet lost here would lock the station forever.
-            if let claimant = peerToPlayer[peer],
-               occupancy[action.station.rawValue] == claimant {
-                occupancy.removeValue(forKey: action.station.rawValue)
-            }
+            applyCompletion(action, claimant: peerToPlayer[peer])
 
         case .claimStation(let station):
             guard isHost, let id = peerToPlayer[peer] else { return }
@@ -911,6 +963,13 @@ final class KitchenSession: ObservableObject {
         case .requestTakeDrawer(let slot):
             guard isHost else { return }
             resolveTake(slot: slot, to: peer)
+        case .pickUpOutput(let station):
+            guard isHost else { return }
+            stationOutput[station] = nil
+
+        case .takeDeposit(let station, let foodID):
+            guard isHost else { return }
+            takeDepositFood(foodID, at: station)
 
         // ---- guest side ----
 

@@ -19,6 +19,10 @@ import Foundation
 
 enum GatingBridge {
 
+    /// The garbage bin's action. Named here rather than in `Recipe` so the
+    /// rotten rules don't have to reach into a shared file for a literal.
+    static let trashActionID = 13
+
     /// Which utensil an action needs in hand, derived from its motion.
     static func requiredUtensil(for action: CookAction) -> UtensilID? {
         switch action.motion {

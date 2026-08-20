@@ -82,6 +82,7 @@ struct KitchenGameView: View {
         }
         made.onOpenDrawer = {
             withAnimation(.easeInOut(duration: 0.2)) { showDrawer = true }
+        }
         made.onHeadsDownChanged = { down in
             withAnimation(.easeInOut(duration: 0.15)) { headsDown = down }
         }

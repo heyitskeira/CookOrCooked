@@ -385,6 +385,14 @@ final class KitchenSession: ObservableObject {
         if isHost {
             guard let action = Recipe.action(actionID) else { return }
             game.complete(action)
+            // The ingredients that were dropped in are eaten by the action.
+            //
+            // The guest path does this (see the `.finishedAction` handler) and
+            // so does the offline one, but the host's own branch lost it in a
+            // merge — so only the host's deposits piled up forever, leaving
+            // later actions at that station starting with their ingredient
+            // gate already satisfied.
+            deposited[action.station.rawValue] = nil
         } else if let hostPeer {
             transport.send(.finishedAction(id: actionID), to: hostPeer)
         }

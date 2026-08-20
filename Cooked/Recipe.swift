@@ -60,6 +60,11 @@ nonisolated enum StationID: String, CaseIterable {
         // Left-hand wall.
         case .table:     return CGPoint(x: 0.24, y: 0.55)
         case .trash:     return CGPoint(x: 0.28, y: 0.30)
+        // Next to the pantry on the right, because they're the same errand:
+        // you go over there to fetch something. Added when the drawer landed —
+        // a merge left this switch a case short, which is a compile error
+        // rather than a bad position, since it must cover every StationID.
+        case .drawer:    return CGPoint(x: 0.72, y: 0.30)
         }
     }
 }
@@ -106,7 +111,7 @@ nonisolated enum Recipe {
     
     // ---- Tuning knobs. These are the numbers to play with. ----
     
-    static let timeLimit: TimeInterval = 120      // 2 minutes
+    static let timeLimit: TimeInterval = 900      // 15 minutes
     static let showRecipeChecklist = true         // set false to simulate hidden recipe
     static let chefSpeed: CGFloat = 240           // points per second
     

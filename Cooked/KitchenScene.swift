@@ -111,20 +111,16 @@ final class KitchenScene: SKScene {
     /// The touch doing the holding, so lifting a *different* finger doesn't
     /// release the button.
     private var serveTouch: UITouch?
+    /// When this device's finger went down, and whether the host has confirmed
+    /// the hold yet. Both exist so "the host dropped my hold" can be told apart
+    /// from "the host hasn't answered yet" — see `refreshServe`.
+    private var serveHoldStartedAt: TimeInterval?
+    private var serveHoldAcknowledged = false
     /// Offline only — when the local bar started filling. Networked games keep
     /// all of this on the host, where it belongs.
     private var localChargeStartedAt: TimeInterval?
     /// White sheet for the flash between a station screen and the kitchen.
     private var flash: SKSpriteNode?
-
-    /// What the chef is visibly carrying out of a station.
-    ///
-    /// Visual only — this deliberately does NOT put anything into
-    /// `PlayerInventory`. Preps landing in the inventory for real is Agung's
-    /// job (task 9), and two people writing the same slot is how you get an
-    /// ingredient that exists twice. When that lands, delete this and read
-    /// `inventory.ingredient?.id` instead.
-    private var carriedPrep: String?
 
     /// The station this chef has walked to and is queueing for. Set on arrival,
     /// cleared once the host grants it or the chef walks off. While it is set
@@ -223,18 +219,11 @@ final class KitchenScene: SKScene {
     }
 
     /// Fills the hands from what the chef is actually holding.
-    ///
-    /// `carriedPrep` is the visual stand-in until preps land in the inventory
-    /// for real; the utensil is already true today, so it is read straight from
-    /// the model rather than mirrored.
     private func refreshHands() {
-        // A real ingredient in the model always wins, and retires the stand-in
-        // for good. Without this the prep would come *back* the moment the
-        // chef put a real ingredient down — showing chopped strawberries that
-        // are actually sitting on the chopping board.
-        if inventory?.ingredient != nil { carriedPrep = nil }
-
-        hands?.setItems(prep: inventory?.ingredient?.id ?? carriedPrep,
+        // Straight from the model. This used to fall back to a local stand-in
+        // because finished preps didn't reach the inventory yet; they do now
+        // (see `openStation`), so there is one source of truth again.
+        hands?.setItems(prep: inventory?.ingredient?.id,
                         isRotten: inventory?.ingredient?.isRotten ?? false,
                         utensil: inventory?.utensil?.id)
     }
@@ -639,12 +628,25 @@ final class KitchenScene: SKScene {
             // window ran out — let go locally too, so the button pops out and
             // the player knows they have to press again rather than standing
             // there with a dead finger on the screen.
-            if isHoldingServe, session.snapshot.serveArmed,
-               !session.snapshot.serveHolding.contains(session.localPlayerID),
+            //
+            // The two flags below are the whole point. "I'm not in the host's
+            // list" means two completely different things depending on when you
+            // ask: before the first acknowledgement it just means the answer is
+            // still in flight, and treating that as a refusal cancelled every
+            // hold one frame after it started — the button appeared to do
+            // nothing at all. Only believe a refusal once the host has either
+            // confirmed us at least once, or had a fair chance to.
+            let acknowledged = session.snapshot.serveHolding.contains(session.localPlayerID)
+            if acknowledged { serveHoldAcknowledged = true }
+
+            if isHoldingServe, session.snapshot.serveArmed, !acknowledged,
                session.snapshot.serveProgress == 0 {
-                endServeHold()
-                serveNode.nudge()
-                look.holding = false
+                let waited = Date.timeIntervalSinceReferenceDate - (serveHoldStartedAt ?? 0)
+                if serveHoldAcknowledged || waited > ServeRitual.holdAckGrace {
+                    endServeHold()
+                    serveNode.nudge()
+                    look.holding = false
+                }
             }
         } else {
             // Offline there is nobody to be in time with, so holding on your own
@@ -700,6 +702,8 @@ final class KitchenScene: SKScene {
         }
 
         isHoldingServe = true
+        serveHoldStartedAt = Date.timeIntervalSinceReferenceDate
+        serveHoldAcknowledged = false
     }
 
     /// Finger up — or the chef wandered off, or the game ended underneath us.
@@ -707,6 +711,8 @@ final class KitchenScene: SKScene {
         guard isHoldingServe else { return }
         isHoldingServe = false
         serveTouch = nil
+        serveHoldStartedAt = nil
+        serveHoldAcknowledged = false
         localChargeStartedAt = nil
         session?.setServeHold(false)
     }
@@ -855,9 +861,6 @@ final class KitchenScene: SKScene {
 
         let overlay = makeOverlay(for: action)
 
-        // Whatever was in hand goes into this action. Carrying the last prep
-        // out of a station you just used it at would be a lie.
-        carriedPrep = nil
 
         // When the player finishes the motion, mark the action done and
         // put them back in the kitchen.
@@ -995,7 +998,10 @@ final class KitchenScene: SKScene {
 
         let seconds = Int(state.timeRemaining)
         hudTime.text = String(format: "%d:%02d", seconds / 60, seconds % 60)
-        hudTime.fontColor = state.timeRemaining < 45 ? SKColor.red : ink
+        // Turns red for the last 10% of the round rather than a fixed 45s. On a
+        // 15 minute clock a flat 45 meant the warning arrived with 5% left; on
+        // a 2 minute one it was on for a third of the game.
+        hudTime.fontColor = state.timeRemaining < Recipe.timeLimit * 0.1 ? SKColor.red : ink
         hudMess.text = "\(state.completedGoalCount)/\(Recipe.goalIDs.count)"
 
         for (id, label) in checklistLabels {
@@ -1121,7 +1127,6 @@ final class KitchenScene: SKScene {
         chef.removeAllActions()
         chef.position = spawnPoint(forColorIndex: session?.localPlayer?.colorIndex ?? 0)
 
-        carriedPrep = nil
         isInServeZone = false
         endServeHold()
         inventory?.clear()

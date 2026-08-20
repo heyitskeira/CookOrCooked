@@ -35,17 +35,31 @@ nonisolated enum StationID: String, CaseIterable {
     
     /// Normalised 0...1 position. Multiplied by scene size at setup so the
     /// layout survives any screen size.
+    ///
+    /// Stations line the walls, the way a real kitchen does — a run of counters
+    /// along the back, the pantry and oven down the right, prep and the bin on
+    /// the left. The middle is left deliberately empty.
+    ///
+    /// That empty floor is where the match opens and closes: chefs spawn there
+    /// in sight of each other, and the whole team has to come back to it to
+    /// serve. See `ServeRitual`.
+    ///
+    /// The positions also clear the screen furniture the scene draws on top of
+    /// the map — the recipe checklist down the top left, the clock top right,
+    /// the chef's hands bottom left, the SERVE button bottom right.
     var unitPosition: CGPoint {
         switch self {
-        case .storage:   return CGPoint(x: 0.10, y: 0.80)
-        case .chopping:  return CGPoint(x: 0.32, y: 0.84)
-        case .bowl1:     return CGPoint(x: 0.55, y: 0.84)
-        case .bowl2:     return CGPoint(x: 0.78, y: 0.84)
-        case .stove:     return CGPoint(x: 0.90, y: 0.56)
-        case .ovenServe: return CGPoint(x: 0.85, y: 0.24)
-        case .table:     return CGPoint(x: 0.50, y: 0.40)
-        case .trash:     return CGPoint(x: 0.12, y: 0.24)
-        case .drawer:    return CGPoint(x: 0.50, y: 0.10)
+        // The counter run along the back wall.
+        case .chopping:  return CGPoint(x: 0.28, y: 0.86)
+        case .bowl1:     return CGPoint(x: 0.45, y: 0.86)
+        case .bowl2:     return CGPoint(x: 0.62, y: 0.86)
+        case .stove:     return CGPoint(x: 0.77, y: 0.86)
+        // Right-hand wall.
+        case .storage:   return CGPoint(x: 0.90, y: 0.60)
+        case .ovenServe: return CGPoint(x: 0.90, y: 0.38)
+        // Left-hand wall.
+        case .table:     return CGPoint(x: 0.24, y: 0.55)
+        case .trash:     return CGPoint(x: 0.28, y: 0.30)
         }
     }
 }

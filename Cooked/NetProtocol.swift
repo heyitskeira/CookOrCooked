@@ -88,6 +88,29 @@ nonisolated struct GameSnapshot: Codable, Equatable {
     /// The drawer's four shelves, in slot order (0/1 cold, 2/3 room temp).
     /// nil means the shelf is empty. Host-owned, like the bowls.
     var drawer: [DrawerItem?] = Array(repeating: nil, count: Drawer.slotCount)
+    // MARK: Serving together
+    //
+    // Serving is the one thing in the kitchen nobody can do alone: every chef
+    // has to be standing in the serve zone, and then everyone has to press at
+    // the same moment. These three fields are what each device draws from —
+    // who has gathered, whether the button is live, and whose press is still
+    // inside the window.
+
+    /// Player ids currently standing in the serve zone.
+    var serveReady: [String] = []
+
+    /// True when every connected chef is in the zone. Until then the SERVE
+    /// button is visible but dead, so the missing person is obvious.
+    var serveArmed: Bool = false
+
+    /// Player ids holding the button right now. A hold that isn't joined by
+    /// everyone else within `ServeRitual.gatherWindow` is dropped by the host,
+    /// so pressing early does nothing rather than banking anything.
+    var serveHolding: [String] = []
+
+    /// How full the serve bar is, 0...1. Only climbs while every connected chef
+    /// is holding; the moment one lets go it goes back to zero.
+    var serveProgress: Double = 0
 
     /// Convenience for the scene: who holds this station, if anyone.
     func holder(of station: StationID) -> String? {
@@ -155,6 +178,13 @@ nonisolated enum NetMessage: Codable {
     case requestStoreDrawer(slot: Int, item: DrawerItem)
     /// "Give me what's on this drawer shelf."
     case requestTakeDrawer(slot: Int)
+    /// "I am / am no longer standing in the serve zone." Sent on the edge, not
+    /// every frame — standing still is the normal case and it costs nothing.
+    case serveReady(Bool)
+    /// "I am holding the serve button" / "I let go." A hold, not a tap: the
+    /// cake is only served if every chef holds at the same time long enough to
+    /// fill the bar, so letting go is as meaningful as pressing.
+    case serveHold(Bool)
 
     // host -> guest
     case queued(position: Int)
@@ -179,6 +209,12 @@ nonisolated enum NetMessage: Codable {
     case joinAccepted(player: Player)
     case joinRejected(reason: JoinRejection)
     case lobby(kitchenName: String, maxPlayers: Int, players: [Player])
+    /// Leave the lobby and open the recipe book. The clock is NOT running yet —
+    /// everyone is reading Today's Order while the head chef studies it.
     case start
+    /// The head chef has closed the book. Now the kitchen opens and the timer
+    /// starts. Split from `start` so that reading the recipe never costs the
+    /// team any of their two minutes.
+    case beginCooking
     case snapshot(GameSnapshot)
 }

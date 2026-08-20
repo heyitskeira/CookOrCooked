@@ -21,6 +21,7 @@
 
 import SpriteKit
 import CoreMotion
+import SwiftUI
 
 
 class EggOverlay: StationOverlay {

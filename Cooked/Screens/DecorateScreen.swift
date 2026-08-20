@@ -32,6 +32,7 @@
 //
 
 import SpriteKit
+import SwiftUI
 import CoreMotion
 
 

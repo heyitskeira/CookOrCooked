@@ -25,6 +25,10 @@ struct KitchenGameView: View {
     @StateObject private var drawerBox = DrawerBox()
     @State private var showStorage = false
     @State private var showDrawer = false
+    /// True while a station screen is up inside the scene. SwiftUI chrome is
+    /// drawn above the SpriteView, so the scene has to tell us to get out of
+    /// the way — the station screen has its own hands.
+    @State private var headsDown = false
 
     var body: some View {
         GeometryReader { geo in
@@ -36,12 +40,12 @@ struct KitchenGameView: View {
                     AppTheme.background
                 }
 
-                // Inventory indicator, pinned bottom-centre over the kitchen.
-                VStack {
-                    Spacer()
-                    InventoryBar(inventory: inventory)
-                        .padding(.bottom, 20)
-                }
+                // The inventory bar used to live here, bottom-centre. It is
+                // gone on purpose: the chef's hands inside the scene show the
+                // same two slots, and the bar's 260x125 footprint sat directly
+                // on top of the oven station once the kitchen became a ring.
+                // Moving it doesn't help — top-centre covers three more
+                // stations. Rotten ingredients are marked on the hand instead.
 
                 if showStorage {
                     StorageView(inventory: inventory, pantry: pantry, session: session, onClose: {
@@ -78,6 +82,8 @@ struct KitchenGameView: View {
         }
         made.onOpenDrawer = {
             withAnimation(.easeInOut(duration: 0.2)) { showDrawer = true }
+        made.onHeadsDownChanged = { down in
+            withAnimation(.easeInOut(duration: 0.15)) { headsDown = down }
         }
         scene = made
     }

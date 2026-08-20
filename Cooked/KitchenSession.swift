@@ -387,7 +387,7 @@ final class KitchenSession: ObservableObject {
 
         if isHost {
             guard let action = Recipe.action(actionID) else { return }
-            applyCompletion(action, claimant: localPlayerID)
+            applyCompletion(action, at: heldStation, claimant: localPlayerID)
         } else if let hostPeer {
             transport.send(.finishedAction(id: actionID), to: hostPeer)
         }
@@ -541,16 +541,32 @@ final class KitchenSession: ObservableObject {
     /// Host-authoritative completion — used whether the host itself finished the
     /// action or a guest reported it. Marks it done, consumes the deposits,
     /// leaves the prep on the station, and frees the station lock.
-    private func applyCompletion(_ action: CookAction, claimant: String?) {
+    private func applyCompletion(_ action: CookAction, at worked: StationID?, claimant: String?) {
         guard isHost else { return }
+        // The bowls are interchangeable, so a chef can perform a bowl1 action
+        // standing at bowl2. Consume the deposits and leave the prep at the
+        // counter they actually worked, not at the one the recipe declares.
+        let station = (worked ?? stationHeld(by: claimant, for: action) ?? action.station).rawValue
         game.complete(action)
-        deposited[action.station.rawValue] = nil
+        deposited[station] = nil
         if let output = action.output {
-            stationOutput[action.station.rawValue] = output
+            stationOutput[station] = output
         }
-        if let claimant, occupancy[action.station.rawValue] == claimant {
-            occupancy.removeValue(forKey: action.station.rawValue)
+        if let claimant, occupancy[station] == claimant {
+            occupancy.removeValue(forKey: station)
         }
+    }
+
+    /// Which station this player holds that can run this action — how the host
+    /// tells bowl1 from bowl2 for a completion reported by a guest.
+    private func stationHeld(by playerID: String?, for action: CookAction) -> StationID? {
+        guard let playerID else { return nil }
+        for (key, holder) in occupancy where holder == playerID {
+            if let id = StationID(rawValue: key), GameState.sharesActions(id, action.station) {
+                return id
+            }
+        }
+        return nil
     }
 
     // MARK: Station locks
@@ -930,7 +946,7 @@ final class KitchenSession: ObservableObject {
             // `resolveServe` and nowhere else.
             guard id != ServeRitual.actionID else { return }
             guard isHost, let action = Recipe.action(id) else { return }
-            applyCompletion(action, claimant: peerToPlayer[peer])
+            applyCompletion(action, at: nil, claimant: peerToPlayer[peer])
 
         case .claimStation(let station):
             guard isHost, let id = peerToPlayer[peer] else { return }

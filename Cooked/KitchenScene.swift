@@ -817,14 +817,22 @@ final class KitchenScene: SKScene {
     /// right utensil) then opens the minigame — directly offline, or via the
     /// host's station lock in a networked game.
     func beginAction(_ action: CookAction) {
+        // Work happens at the counter the chef is STANDING at, which is not
+        // always `action.station`: the two bowls are interchangeable, so "Sift
+        // flour" (declared on bowl1) is offered at bowl2 as well. Reading the
+        // declared station instead of the real one meant the deposits were
+        // looked up in the wrong bowl and the gate answered "Need: Flour" for
+        // flour the chef had just dropped in front of them.
+        let where_ = workingStation(for: action)
+
         // A finished prep on the station blocks new work until it's collected.
-        if outputFood(at: action.station) != nil {
-            showToast("Clear the \(GatingBridge.displayName(outputFood(at: action.station)!)) first")
+        if let blocking = outputFood(at: where_) {
+            showToast("Clear the \(GatingBridge.displayName(blocking)) first")
             return
         }
 
         let need = GatingBridge.requiredIngredients(for: action)
-        let missing = need.subtracting(depositedFoods(at: action.station))
+        let missing = need.subtracting(depositedFoods(at: where_))
         if !missing.isEmpty {
             showToast("Need: " + missing.map { GatingBridge.displayName($0) }.sorted().joined(separator: ", "))
             return
@@ -839,14 +847,24 @@ final class KitchenScene: SKScene {
 
         // Offline: nobody to share the kitchen with.
         guard let session else {
-            openStation(action)
+            openStation(action, at: where_)
             return
         }
 
         // Networked: claim the station and wait for the host's grant.
-        waitingStation = action.station
+        waitingStation = where_
         lastWaitToastFor = nil
-        session.claimStation(action.station)
+        session.claimStation(where_)
+    }
+
+    /// The station this action will actually be performed at — where the chef
+    /// stands when that counter offers the action (bowls share), otherwise the
+    /// action's own station.
+    private func workingStation(for action: CookAction) -> StationID {
+        guard let here = chefStation, GameState.sharesActions(here, action.station) else {
+            return action.station
+        }
+        return here
     }
 
     /// Runs every frame while queueing. Handles the three things that can
@@ -889,7 +907,7 @@ final class KitchenScene: SKScene {
             waitingStation = nil
             lastWaitToastFor = nil
             pendingAction = nil
-            openStation(action)
+            openStation(action, at: waiting)
         } else if let occupant = session.occupant(of: waiting),
                   occupant.id != session.localPlayerID,
                   lastWaitToastFor != waiting {
@@ -921,7 +939,7 @@ final class KitchenScene: SKScene {
         }
     }
 
-    private func openStation(_ action: CookAction) {
+    private func openStation(_ action: CookAction, at station: StationID) {
         activeAction = action
 
         let overlay = makeOverlay(for: action)
@@ -939,19 +957,15 @@ final class KitchenScene: SKScene {
             } else {
                 self.state.complete(action)
                 // Offline: consume the deposits and leave the prep on the station.
-                self.localDeposited[action.station] = nil
-                if let out = action.output { self.localOutput[action.station] = out }
+                self.localDeposited[station] = nil
+                if let out = action.output { self.localOutput[station] = out }
             }
-
-            // Walk out holding what you just made. Visual only — see
-            // `carriedPrep`.
-            self.carriedPrep = RecipeBook.carriedResult(forActionID: action.id)
 
             self.closeStation(rewarding: true)
             // A producing action shows the "you got a prep" result popup; a
             // non-producing one (pre-heat, serve) just toasts.
             if let out = action.output {
-                self.onActionFinished?(action.station, out)
+                self.onActionFinished?(station, out)
             } else {
                 self.showToast("\(action.name) — done")
             }

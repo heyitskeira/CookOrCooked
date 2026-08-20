@@ -41,24 +41,40 @@ struct KitchenGameView: View {
                     AppTheme.background
                 }
 
-                // Inventory indicator, pinned bottom-centre over the kitchen.
-                // Gone while heads-down at a station: the station screen shows
-                // the same two slots as a pair of hands, and two versions of
-                // the truth on one screen is one too many.
-                if !headsDown {
-                    VStack {
-                        Spacer()
-                        InventoryBar(inventory: inventory)
-                            .padding(.bottom, 20)
-                    }
-                    .transition(.opacity)
-                }
-
                 if showStorage {
                     StorageView(inventory: inventory, pantry: pantry, session: session, onClose: {
                         withAnimation(.easeInOut(duration: 0.2)) { showStorage = false }
                     })
                     .transition(.opacity)
+                }
+
+                // Inventory indicator. Bottom-centre in the kitchen; while the
+                // pantry is open it moves to the top-right corner (clear of the
+                // back button top-left and the centered storage panel) and is
+                // drawn AFTER storage so it stays visible as the chef picks.
+                //
+                // Still gone while heads-down at a station: the station screen
+                // shows the same two slots as a pair of hands, and two versions
+                // of the truth on one screen is one too many.
+                if !headsDown {
+                    if showStorage {
+                        VStack {
+                            HStack {
+                                Spacer()
+                                InventoryBar(inventory: inventory)
+                            }
+                            Spacer()
+                        }
+                        .padding(20)
+                        .transition(.opacity)
+                    } else {
+                        VStack {
+                            Spacer()
+                            InventoryBar(inventory: inventory)
+                                .padding(.bottom, 20)
+                        }
+                        .transition(.opacity)
+                    }
                 }
 
                 if let station = activeStation {

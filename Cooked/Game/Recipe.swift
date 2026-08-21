@@ -69,7 +69,6 @@ nonisolated enum StationID: String, CaseIterable {
         // you go over there to fetch something. Added when the drawer landed —
         // a merge left this switch a case short, which is a compile error
         // rather than a bad position, since it must cover every StationID.
-        case .drawer:    return CGPoint(x: 0.72, y: 0.30)
         }
     }
 }

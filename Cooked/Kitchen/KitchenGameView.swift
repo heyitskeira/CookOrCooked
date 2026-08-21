@@ -33,6 +33,7 @@ struct KitchenGameView: View {
     @State private var activeStation: StationID?
     // The prep just produced, awaiting the "hands vs station" choice.
     @State private var finishedPrep: PrepResult?
+    @State private var showRecipe = false
     // Raised when a chef carrying rot taps anywhere but the bin.
     @State private var showRottenAlert = false
 
@@ -88,6 +89,31 @@ struct KitchenGameView: View {
                     .transition(.opacity)
                 }
 
+                // The recipe pages, reopenable mid-match — just the pages
+                // (RecipeSpreadView), not the whole RecipeBookView: no backdrop,
+                // no back button that would ask to leave the kitchen, no START
+                // signpost. Only the head chef gets the trigger button —
+                // anyone else would just see the "waiting for head chef"
+                // placeholder, which defeats the point of checking it.
+                if showRecipe {
+                    RecipeSpreadView(session: session)
+                        .padding(20)
+                        .transition(.opacity)
+                        .zIndex(3)
+                        .overlay(alignment: .topTrailing) {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.15)) { showRecipe = false }
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundStyle(AppTheme.cream)
+                                    .frame(width: 40, height: 40)
+                                    .background(Circle().fill(AppTheme.ink.opacity(0.85)))
+                            }
+                            .padding(18)
+                        }
+                }
+
                 if showRottenAlert {
                     PrepHeldAlert(message: Rotten.blockedMessage, emoji: Rotten.emoji) {
                         withAnimation(.easeInOut(duration: 0.15)) { showRottenAlert = false }
@@ -114,6 +140,25 @@ struct KitchenGameView: View {
                     hostLeftBanner
                 } else if let player = session.localPlayer, !player.isConnected {
                     reconnectingBanner
+                }
+
+                // Trigger: top-left, head chef only, hidden while already open.
+                if session.isHeadChef && !showRecipe {
+                    VStack(alignment: .leading) {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.15)) { showRecipe = true }
+                        } label: {
+                            Image(systemName: "book.closed.fill")
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundStyle(AppTheme.ink)
+                                .frame(width: 44, height: 44)
+                                .background(Circle().fill(AppTheme.cream))
+                                .overlay(Circle().stroke(AppTheme.ink, lineWidth: 2))
+                        }
+                        Spacer()
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
             }
             .onAppear { build(size: geo.size) }
@@ -169,4 +214,8 @@ struct KitchenGameView: View {
                 .padding(.bottom, 28)
         }
     }
+}
+
+#Preview {
+    KitchenGameView(session: KitchenSession(role: .host, kitchenName: "Preview Kitchen"))
 }

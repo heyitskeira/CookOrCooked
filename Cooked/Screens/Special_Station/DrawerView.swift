@@ -58,13 +58,17 @@ struct DrawerView: View {
     // MARK: Acting on a shelf
     
     private func tap(slot index: Int) {
-        if item(inSlot: index) == nil && inventory.ingredient != nil && inventory.ingredient!.isRotten == false {
+        // Rotten food never touches a shelf — check this first, and return,
+        // rather than falling into store/take with a stale rotten hand.
+        if let held = inventory.ingredient, held.isRotten {
+            notice = "Dispose the rotten ingredient"
+            return
+        }
+
+        if item(inSlot: index) == nil {
             store(into: index)
         } else {
             take(from: index)
-            if inventory.ingredient!.isRotten && inventory.ingredient != nil{
-                notice = "Dispose the rotten ingredient"
-            }
         }
     }
     
@@ -73,6 +77,7 @@ struct DrawerView: View {
             notice = "You're not holding anything to put away"
             return
         }
+        
         let entry = DrawerItem(foodID: held.id, name: held.name, isRotten: held.isRotten)
         
         if let session {

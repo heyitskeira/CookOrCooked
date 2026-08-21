@@ -82,6 +82,8 @@ nonisolated enum ActionMotion {
     case melt
     case breakEgg
     case hold
+    /// Throwing the rotten one into the bin: tilt to aim, hold to charge.
+    case throwAway
 }
 
 // MARK: - Actions
@@ -147,7 +149,7 @@ nonisolated enum Recipe {
         CookAction(id: 10, name: "Assemble",              station: .table,                        requires: [],  output: "assembledCake"),
         CookAction(id: 11, name: "Decorate Cake",         station: .table,                        requires: [],  output: "finishedCake"),
         CookAction(id: 12, name: "Serve the Cake",        station: .ovenServe,                    requires: [11]),
-        CookAction(id: 13, name: "Threw rotten ingredients", station: .trash,                     requires: [],  isRepeatable: true)
+        CookAction(id: 13, name: "Threw rotten ingredients", station: .trash, motion: .throwAway,  requires: [],  isRepeatable: true)
     ]
     
     static var goalIDs: [Int] {

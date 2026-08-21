@@ -50,6 +50,10 @@ struct ResultPopupView: View {
 
                 VStack(spacing: 12) {
                     choice(title: "Put in my hands", tint: AppTheme.tomato) {
+                        if inventory.isHoldingRotten {
+                            alert = Rotten.blockedMessage
+                            return
+                        }
                         if inventory.isHoldingPrep {
                             alert = "You already held on to a prep!"
                             return

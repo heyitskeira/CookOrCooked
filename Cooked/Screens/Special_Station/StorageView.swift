@@ -135,6 +135,10 @@ struct StorageView: View {
         case .ingredients:
             itemList(Storage.ingredients.map { ($0.id, $0.name) }) { id in
                 guard let ing = Storage.ingredients.first(where: { $0.id == id }) else { return }
+                if inventory.isHoldingRotten {
+                    prepAlert = Rotten.blockedMessage
+                    return
+                }
                 if inventory.isHoldingPrep {
                     prepAlert = "You already held on to a prep!"
                     return
@@ -233,9 +237,14 @@ struct StorageView: View {
                 emoji: draw.isRotten ? "🤢" : "✨",
                 headline: draw.isRotten ? "Rotten \(draw.ingredient.name)!" : "Fresh \(draw.ingredient.name)!",
                 tint: draw.isRotten ? Color(red: 0.5, green: 0.35, blue: 0.15) : AppTheme.tomato,
-                subtitle: draw.isRotten ? "Yuck — better toss this one." : "Nice and fresh."
+                subtitle: draw.isRotten ? "Throw it to the garbage bin!" : "Nice and fresh."
             ) {
+                let wasRotten = draw.isRotten
                 ingredientDraw = nil
+                // Rot sticks to the hand until the bin takes it, so there is
+                // nothing left to do in here — leave the shelves rather than
+                // stand in front of them unable to pick anything up.
+                if wasRotten { onClose() }
             }
         } else if let utensil = takenUtensil {
             popupCard(

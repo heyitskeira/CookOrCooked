@@ -86,6 +86,26 @@ struct RecipeBookView: View {
                 print("⚠️ RecipeBook: no action behind step(s) " +
                       orphans.map { "#\($0.number) \($0.title)" }.joined(separator: ", "))
             }
+            // Same failure, one step further in: the action exists, but not at
+            // the counter the page names. The chef walks to the wrong station
+            // and finds the step isn't offered there.
+            let misplaced = RecipeBook.stepsAtWrongStation
+            if !misplaced.isEmpty {
+                print("⚠️ RecipeBook: wrong station on " +
+                      misplaced.map { "#\($0.step.number) \($0.step.title) " +
+                                      "(book: \($0.step.station.displayName), " +
+                                      "kitchen: \($0.actual.displayName))" }
+                              .joined(separator: ", "))
+            }
+            // And the third copy of the same facts: the rules engine's own
+            // table of recipes. All three have to name the same counter.
+            let drifted = RecipeBook.recipesAtWrongStation
+            if !drifted.isEmpty {
+                print("⚠️ RecipeBook: rules engine has " +
+                      drifted.map { "\($0.recipe.name) at \($0.recipe.station.displayName) " +
+                                    "(kitchen: \($0.actual.displayName))" }
+                             .joined(separator: ", "))
+            }
             #endif
         }
     }

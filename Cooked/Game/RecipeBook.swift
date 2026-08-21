@@ -99,15 +99,20 @@ enum RecipeBook {
 
         BookStep(number: 5, title: "Crack eggs",
                  inputs: ["egg"], utensil: "whisk",
-                 output: "beatenEgg", station: .bowl1,
+                 output: "crackedEgg", station: .bowl1,
                  gatingID: "beat"),
 
+        // The dough is made at the Mixing station, not at a bowl. The book said
+        // "Bowl 1 or 2" while `Recipe.actions` put action 6 on `.mixing`, so
+        // the page sent chefs to a counter that never offered the step.
         BookStep(number: 6, title: "Mix dough",
-                 inputs: ["siftedFlour", "meltedButter", "beatenEgg", "sugar", "cream"],
+                 inputs: ["siftedFlour", "meltedButter", "crackedEgg", "sugar"],
                  utensil: "mixer",
-                 output: "rawDough", station: .bowl1,
+                 output: "rawDough", station: .mixing,
                  gatingID: "dough"),
 
+        // Sugar goes in with the cream. The page listed cream alone, so a chef
+        // reading the book brought one thing and the whisk never lit up.
         BookStep(number: 7, title: "Whip cream",
                  inputs: ["cream", "sugar"], utensil: "whisk",
                  output: "whippedCream", station: .bowl1,
@@ -184,6 +189,46 @@ enum RecipeBook {
         return uncarryable.contains(step.output) ? nil : step.output
     }
 
+    /// Steps whose page sends the chef to a different counter than the one the
+    /// kitchen actually runs the action at.
+    ///
+    /// `gatingID` proves the step *can* happen; this proves it can happen
+    /// *where the book says*. Step 6 shipped reading "Bowl 1 or 2" while
+    /// `Recipe.actions` had the dough on `.mixing`, and nothing caught it.
+    /// Bowls count as one counter — `sharesActions` makes them interchangeable.
+    static var stepsAtWrongStation: [(step: BookStep, actual: StationID)] {
+        Recipe.actions.compactMap { action in
+            guard !action.isRepeatable,
+                  let step = step(forActionID: action.id),
+                  !step.servedTogether,
+                  !GameState.sharesActions(step.station, action.station)
+            else { return nil }
+            return (step, action.station)
+        }
+    }
+
+    /// Actions whose rules-engine recipe sits at a different counter than the
+    /// kitchen runs them at.
+    ///
+    /// `stepsAtWrongStation` checks the page against the kitchen. This checks
+    /// the third copy of the same facts — `Recipes.all` in `GatingLogic` —
+    /// against the kitchen too, so all three have to agree. The dough drifted
+    /// here: `.bowl` in the rules engine, `.mixing` in `Recipe.actions`.
+    static var recipesAtWrongStation: [(recipe: GatingRecipe, actual: StationID)] {
+        Recipe.actions.compactMap { action in
+            guard !action.isRepeatable,
+                  let step = step(forActionID: action.id),
+                  // Serving happens in the middle of the room, so no counter is
+                  // the right answer for it. Skipped here as in the sibling check.
+                  !step.servedTogether,
+                  let id = step.gatingID,
+                  let recipe = Recipes.all.first(where: { $0.id == id }),
+                  !GameState.sharesActions(recipe.station.kitchenStation, action.station)
+            else { return nil }
+            return (recipe, action.station)
+        }
+    }
+
     /// Steps the player is told to do that the rules engine cannot actually
     /// perform. A `gatingID` nobody checks is a comment, not a join — this is
     /// what makes it real. `RecipeBookView` trips an assertion on it in debug
@@ -232,7 +277,7 @@ enum FoodArt {
         "maceratedStrawberries": Look(symbol: "drop.fill",               tint: berry),
         "siftedFlour":           Look(symbol: "aqi.medium",              tint: dough),
         "meltedButter":          Look(symbol: "drop.fill",               tint: butter),
-        "beatenEgg":             Look(symbol: "tornado",                 tint: butter),
+        "crackedEgg":            Look(symbol: "tornado",                 tint: butter),
         "whippedCream":          Look(symbol: "cloud.fill",              tint: cream),
         "rawDough":              Look(symbol: "circle.fill",             tint: dough),
         "bakedBase":             Look(symbol: "rectangle.stack.fill",    tint: bake),

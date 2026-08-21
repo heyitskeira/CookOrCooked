@@ -55,19 +55,27 @@ private enum GatingTests {
                    GatingEngine.perform(at: bin, holdingUtensil: nil) == .trashed)
         }
 
-        // 3) Make dough needs ALL five + mixer.
+        // 3) Make dough needs all four + mixer, at the Mixing station.
         do {
+            let mixing = Station(type: .mixing)
+            [.siftedFlour, .meltedButter, .crackedEgg].forEach {
+                GatingEngine.deposit(FoodItem(id: $0), into: mixing)
+            }
+            expect("Dough not ready with only 3 of 4",
+                   GatingEngine.availableAction(at: mixing, holdingUtensil: .mixer) == nil)
+            GatingEngine.deposit(FoodItem(id: .sugar), into: mixing)
+            expect("Dough not ready with 4 but wrong utensil",
+                   GatingEngine.availableAction(at: mixing, holdingUtensil: .whisk) == nil)
+            expect("Dough ready with 4 + mixer",
+                   GatingEngine.availableAction(at: mixing, holdingUtensil: .mixer)?.id == "dough")
+
+            // A bowl holding the same four is not where the dough happens.
             let bowl = Station(type: .bowl)
             [.siftedFlour, .meltedButter, .crackedEgg, .sugar].forEach {
                 GatingEngine.deposit(FoodItem(id: $0), into: bowl)
             }
-            expect("Dough not ready with only 4 of 5",
+            expect("Dough is not offered at a bowl",
                    GatingEngine.availableAction(at: bowl, holdingUtensil: .mixer) == nil)
-            GatingEngine.deposit(FoodItem(id: .cream), into: bowl)
-            expect("Dough not ready with 5 but wrong utensil",
-                   GatingEngine.availableAction(at: bowl, holdingUtensil: .whisk) == nil)
-            expect("Dough ready with 5 + mixer",
-                   GatingEngine.availableAction(at: bowl, holdingUtensil: .mixer)?.id == "dough")
         }
 
         // 4) Bake needs a pre-heated oven.

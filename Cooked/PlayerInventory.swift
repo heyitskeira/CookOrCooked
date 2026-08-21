@@ -35,6 +35,16 @@ struct HeldUtensil: Identifiable, Equatable, Codable {
     let name: String
 }
 
+// MARK: - Rotten rule
+
+/// The one rule rot adds to the game, and the one sentence that explains it.
+/// Storage, the station popup and the kitchen map all refuse the same way, so
+/// the wording lives here rather than being retyped at each refusal.
+enum Rotten {
+    static let blockedMessage = "You're holding onto a trash! Throw it away first"
+    static let emoji = "🤢"
+}
+
 // MARK: - Inventory
 
 /// One chef's two hands: an ingredient slot and a utensil slot.
@@ -60,6 +70,10 @@ final class PlayerInventory: ObservableObject {
     var isEmpty: Bool { ingredient == nil && utensil == nil }
     /// The chef is carrying a prep, so the ingredient hand is locked.
     var isHoldingPrep: Bool { ingredient?.isPrep == true }
+    /// The chef is carrying something rotten. Same lock as a prep, but stricter
+    /// in what releases it: a prep can be set down anywhere, rot leaves the
+    /// hand only at the garbage bin.
+    var isHoldingRotten: Bool { ingredient?.isRotten == true }
 
     /// Does the chef hold this exact ingredient? (used by gating later)
     func holds(ingredientID: String) -> Bool { ingredient?.id == ingredientID }
@@ -70,10 +84,12 @@ final class PlayerInventory: ObservableObject {
     // MARK: Pick up
 
     /// Take an ingredient/prep into the hand. Fails (returns false) when a prep
-    /// is already held — a prep can't be swapped for anything else.
+    /// or a rotten ingredient is already held — neither can be swapped for
+    /// anything else. Rot in particular used to be replaceable by walking back
+    /// to storage and grabbing something new, which made it free.
     @discardableResult
     func pickUp(_ newItem: HeldIngredient) -> Bool {
-        if isHoldingPrep { return false }
+        if isHoldingPrep || isHoldingRotten { return false }
         ingredient = newItem
         return true
     }

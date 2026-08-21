@@ -46,6 +46,14 @@ final class KitchenScene: SKScene {
     /// Called when a producing action finishes — SwiftUI shows the "you got a
     /// prep" result popup (station id + the produced foodID).
     var onActionFinished: ((StationID, String) -> Void)?
+
+    /// Called when a chef carrying something rotten taps anywhere but the bin —
+    /// SwiftUI shows the "throw it away first" alert.
+    var onRottenBlocked: (() -> Void)?
+
+    /// Rot in hand locks the chef out of the whole kitchen except the garbage
+    /// bin: no storage, no drawer, no station, no serve circle.
+    private var isCarryingRotten: Bool { inventory?.isHoldingRotten == true }
     /// Ingredients deposited per station when playing offline (no session). In a
     /// networked game the host owns this via the snapshot instead.
     private var localDeposited: [StationID: Set<String>] = [:]
@@ -449,6 +457,14 @@ final class KitchenScene: SKScene {
         // Already walking somewhere.
         if isWalking { return }
 
+        // Carrying rot, the bin is the only place worth walking to. Refusing
+        // the tap here rather than on arrival means the chef isn't marched
+        // across the kitchen just to be told no.
+        if isCarryingRotten, nearestStation(to: point) != .trash {
+            onRottenBlocked?()
+            return
+        }
+
         // Tapping the circle walks you into it. It isn't a station — that's the
         // whole point of it — so it gets its own target.
         if let serveNode, !serveNode.isHidden, isServeZoneTap(point) {
@@ -594,7 +610,11 @@ final class KitchenScene: SKScene {
         let unlocked = state.isUnlocked(serve)
         let dx = chef.position.x - serveNode.zonePoint.x
         let dy = chef.position.y - serveNode.zonePoint.y
-        let inZone = unlocked && sqrt(dx * dx + dy * dy) <= ServeRitual.zoneRadius(for: size)
+        // A chef holding rot can't be part of the ritual — the tap gate keeps
+        // them out of the circle, and this keeps them out of the host's count
+        // if they were already standing on their mark when the rot landed.
+        let inZone = unlocked && !isCarryingRotten
+            && sqrt(dx * dx + dy * dy) <= ServeRitual.zoneRadius(for: size)
 
         if inZone != isInServeZone {
             isInServeZone = inZone
@@ -825,6 +845,18 @@ final class KitchenScene: SKScene {
         // flour the chef had just dropped in front of them.
         let where_ = workingStation(for: action)
 
+        // The bin consumes what's in the hand, not what's deposited, so it gets
+        // its own gate: rot in hand, or there is nothing to throw out.
+        if action.id == GatingBridge.trashActionID {
+            guard isCarryingRotten else {
+                showToast("Nothing rotten to throw out")
+                return
+            }
+        } else if isCarryingRotten {
+            showToast("Throw the rotten one away first")
+            return
+        }
+
         // A finished prep on the station blocks new work until it's collected.
         if let blocking = outputFood(at: where_) {
             showToast("Clear the \(GatingBridge.displayName(blocking)) first")
@@ -936,6 +968,8 @@ final class KitchenScene: SKScene {
             return EggOverlay(screenSize: size, actionName: action.name)
         case .hold:
             return HoldOverlay(screenSize: size, actionName: action.name)
+        case .throwAway:
+            return GarbageThrowOverlay(screenSize: size, actionName: action.name)
         }
     }
 
@@ -959,6 +993,13 @@ final class KitchenScene: SKScene {
                 // Offline: consume the deposits and leave the prep on the station.
                 self.localDeposited[station] = nil
                 if let out = action.output { self.localOutput[station] = out }
+            }
+
+            // Throwing out is the one action whose input is the hand. It
+            // makes no prep and consumes no deposit — it just empties the
+            // ingredient slot, which is what unlocks the rest of the kitchen.
+            if action.id == GatingBridge.trashActionID {
+                self.inventory?.dropIngredient()
             }
 
             self.closeStation(rewarding: true)
@@ -1108,7 +1149,12 @@ final class KitchenScene: SKScene {
     private func refreshStations() {
         for (id, node) in stationNodes {
             let owner = session?.occupant(of: id)
-            let ready = id == .storage || id == .drawer || state.availableAction(at: id) != nil
+            // The bin is always "available" in recipe terms (repeatable, no
+            // requirements), which would leave it lit all game. Light it for
+            // the one chef who has something to throw out instead.
+            let ready = id == .trash
+                ? isCarryingRotten
+                : (id == .storage || id == .drawer || state.availableAction(at: id) != nil)
             let key = owner.map { "busy:\($0.id):\($0.colorIndex)" } ?? "free:\(ready)"
             if stationLooks[id] == key { continue }
             stationLooks[id] = key

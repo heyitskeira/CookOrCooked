@@ -34,10 +34,19 @@ struct StationPopupView: View {
     /// serve) drop off once done. Trash/rotten is handled by its own flow.
     private var candidates: [CookAction] {
         Recipe.actions.filter { a in
-            a.id != 13
+            a.id != GatingBridge.trashActionID
             && GameState.sharesActions(station, a.station)
             && (a.isRepeatable || !completed.contains(a.id))
         }
+    }
+
+    /// Why the ingredient hand can't take anything right now, or nil if it can.
+    /// Checked before every pick-up: `PlayerInventory.pickUp` refuses a locked
+    /// hand, and taking the prep off the station first would lose it.
+    private var handBlockMessage: String? {
+        if inventory.isHoldingRotten { return Rotten.blockedMessage }
+        if inventory.isHoldingPrep   { return "You already held on to a prep!" }
+        return nil
     }
 
     /// Raw storage ingredients (everything else is a prep, which locks the hand).
@@ -58,7 +67,9 @@ struct StationPopupView: View {
     /// isn't blocked by a finished prep and doesn't already hold this item), so
     /// a chef is never stuck carrying something with nowhere to put it.
     private var depositable: HeldIngredient? {
-        guard output == nil, let ing = inventory.ingredient, !deposited.contains(ing.id) else { return nil }
+        // Rot is not a deposit — the bin is the only thing that takes it.
+        guard output == nil, let ing = inventory.ingredient,
+              !ing.isRotten, !deposited.contains(ing.id) else { return nil }
         return ing
     }
 
@@ -78,8 +89,8 @@ struct StationPopupView: View {
                 // ---- Preps: pick up what's finished, or drop what you carry ----
                 if let output {
                     prepButton(title: "Pick up \(GatingBridge.displayName(output))", icon: "hand.raised.fill") {
-                        if inventory.isHoldingPrep {
-                            alert = "You already held on to a prep!"
+                        if let blocked = handBlockMessage {
+                            alert = blocked
                             return
                         }
                         if let food = session.pickUpOutput(at: station) {
@@ -93,8 +104,8 @@ struct StationPopupView: View {
                 if output == nil {
                     ForEach(deposited.sorted(), id: \.self) { food in
                         prepButton(title: "Pick up \(GatingBridge.displayName(food))", icon: "hand.raised") {
-                            if inventory.isHoldingPrep {
-                                alert = "You already held on to a prep!"
+                            if let blocked = handBlockMessage {
+                                alert = blocked
                                 return
                             }
                             if session.takeDeposit(food, at: station) {
@@ -115,6 +126,11 @@ struct StationPopupView: View {
                     }
                 }
 
+                // ---- The bin: one button, and it takes the HAND, not a drop ----
+                if station == .trash {
+                    binButton
+                }
+
                 // ---- Actions (contextual; dimmed when they can't run) ----
                 ForEach(candidates, id: \.id) { action in
                     actionButton(action)
@@ -122,7 +138,8 @@ struct StationPopupView: View {
 
                 // Only truly empty — no action, nothing to pick up or take back,
                 // nothing to drop.
-                if candidates.isEmpty && output == nil && depositable == nil && deposited.isEmpty {
+                if station != .trash && candidates.isEmpty && output == nil
+                    && depositable == nil && deposited.isEmpty {
                     Text("Nothing to do here right now")
                         .font(.system(size: 15, weight: .semibold, design: .rounded))
                         .foregroundStyle(AppTheme.ink.opacity(0.5))
@@ -149,6 +166,35 @@ struct StationPopupView: View {
                 PrepHeldAlert(message: alert) { self.alert = nil }
             }
         }
+    }
+
+    /// Throw out what's in the hand. Live only while that's something rotten —
+    /// the bin doesn't eat good food, and a chef with clean hands gets a dimmed
+    /// button telling them so.
+    @ViewBuilder
+    private var binButton: some View {
+        let rotten = inventory.isHoldingRotten ? inventory.ingredient : nil
+        Button {
+            guard let action = Recipe.action(GatingBridge.trashActionID) else { return }
+            onDoAction(action)
+            onClose()
+        } label: {
+            HStack(spacing: 12) {
+                Text(Rotten.emoji)
+                Text(rotten.map { "Throw out the \($0.name)" } ?? "Nothing rotten to throw out")
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                Spacer()
+            }
+            .foregroundStyle(AppTheme.cream)
+            .padding(.horizontal, 20)
+            .frame(height: 60)
+            .frame(maxWidth: .infinity)
+            .background(Capsule().fill(AppTheme.tomato))
+            .overlay(Capsule().stroke(AppTheme.ink, lineWidth: 3))
+        }
+        .buttonStyle(.plain)
+        .opacity(rotten == nil ? 0.4 : 1)
+        .disabled(rotten == nil)
     }
 
     private func actionButton(_ action: CookAction) -> some View {
@@ -209,6 +255,8 @@ struct StationPopupView: View {
 /// holding a prep. Shared by the station, result, and storage screens.
 struct PrepHeldAlert: View {
     let message: String
+    /// 🙌 for a full hand, 🤢 for a rotten one.
+    var emoji: String = "🙌"
     var onDismiss: () -> Void
 
     var body: some View {
@@ -216,7 +264,7 @@ struct PrepHeldAlert: View {
             Color.black.opacity(0.5).ignoresSafeArea()
                 .onTapGesture { onDismiss() }
             VStack(spacing: 16) {
-                Text("🙌").font(.system(size: 44))
+                Text(emoji).font(.system(size: 44))
                 Text(message)
                     .font(.system(size: 20, weight: .heavy, design: .rounded))
                     .foregroundStyle(AppTheme.ink)

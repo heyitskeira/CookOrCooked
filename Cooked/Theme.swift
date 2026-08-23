@@ -13,6 +13,10 @@ enum AppTheme {
     static let creamDeep = Color(red: 0.94, green: 0.86, blue: 0.72)
     static let tomato = Color(red: 0.91, green: 0.27, blue: 0.24)
     static let ink = Color(red: 0.13, green: 0.11, blue: 0.10)
+    /// The yes to tomato's no — ready lamps, confirmations, anything that means
+    /// "this one is done". Taken from the basil in `PlayerPalette` so a green
+    /// tick never fights the green chef sitting next to it.
+    static let basil = Color(red: 0.24, green: 0.55, blue: 0.32)
 
     // Warm kitchen backdrop used across screens
     static var background: some View {

@@ -64,6 +64,11 @@ struct WaitingRoomView: View {
                 // so the lobby underneath must not linger.
                 showGame = false
                 dismiss()
+            case .hostLeft where !didLeaveLobby:
+                // The kitchen closed while we were still in the lobby. There is
+                // no game cover to show the closed screen, so bow out here.
+                session.leave()
+                dismiss()
             default:
                 break
             }
@@ -144,31 +149,76 @@ struct WaitingRoomView: View {
         .shadow(color: AppTheme.ink.opacity(0.2), radius: 12, x: 0, y: 8)
     }
 
+    // MARK: Ready
+    //
+    // There is no host "Start cooking" button any more. Every chef — the host
+    // included — presses Ready, and the match starts by itself once the room is
+    // unanimous. The host used to be able to start on someone still choosing a
+    // seat; now the only way in is everybody saying so.
+
     @ViewBuilder
     private var startButton: some View {
-        if session.isHost {
-            PillButton(
-                title: "Start cooking",
-                style: .filled(background: AppTheme.tomato, foreground: AppTheme.cream)
-            ) {
-                session.startCooking()
+        VStack(spacing: 12) {
+            if let seconds = session.startSecondsLeft {
+                countdown(seconds)
             }
-            .opacity(session.canStart ? 1 : 0.5)
-            .disabled(!session.canStart)
-        } else {
-            HStack(spacing: 12) {
-                ProgressView().tint(AppTheme.ink)
-                Text("Waiting for the host to start…")
-                    .font(.system(size: 17, weight: .semibold, design: .rounded))
-                    .foregroundStyle(AppTheme.ink.opacity(0.6))
-            }
-            .frame(height: 72)
+            // The Ready button stays on screen through the countdown on
+            // purpose. Three seconds exists so somebody can change their mind,
+            // and hiding the only control that would let them makes it a
+            // decorative delay instead of a real one.
+            readyButton
+            Text(session.startSecondsLeft == nil ? readyHint : "Tap to hold everyone up")
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .foregroundStyle(AppTheme.ink.opacity(0.5))
+                .multilineTextAlignment(.center)
         }
+    }
+
+    private var readyButton: some View {
+        PillButton(
+            title: session.isReady ? "Ready — tap to wait" : "I'm ready",
+            style: session.isReady
+                ? .outlined(background: AppTheme.cream, foreground: AppTheme.ink)
+                : .filled(background: AppTheme.tomato, foreground: AppTheme.cream)
+        ) {
+            session.setReady(!session.isReady)
+        }
+    }
+
+    private func countdown(_ seconds: Int) -> some View {
+        VStack(spacing: 4) {
+            Text("\(seconds)")
+                .font(.system(size: 56, weight: .heavy, design: .rounded))
+                .foregroundStyle(AppTheme.tomato)
+                .contentTransition(.numericText(countsDown: true))
+                .animation(.snappy(duration: 0.3), value: seconds)
+            Text("Everyone's ready — heading to Today's Order")
+                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .foregroundStyle(AppTheme.ink.opacity(0.6))
+        }
+        .frame(height: 90)
+    }
+
+    /// Says what the room is actually waiting on, which is nearly always more
+    /// useful than "waiting for the host".
+    private var readyHint: String {
+        if session.connectedCount < 2 { return "Waiting for at least one more chef" }
+        let notReady = session.players.filter { $0.isConnected && !$0.isReady }
+        if notReady.isEmpty { return "Starting…" }
+        if notReady.count == 1, let only = notReady.first {
+            return only.id == session.localPlayerID
+                ? "Everyone else is ready"
+                : "Waiting on \(only.name)"
+        }
+        return "Waiting on \(notReady.count) chefs"
     }
 
     private var backButton: some View {
         Button {
-            session.leave()
+            // The host leaving is the end of the kitchen, and the guests are
+            // told so explicitly — otherwise they freeze and wait ninety
+            // seconds for a host who is already back on the menu.
+            if session.isHost { session.closeKitchen() } else { session.leave() }
             dismiss()
         } label: {
             Image(systemName: "chevron.left")
@@ -208,17 +258,31 @@ private struct PlayerRow: View {
 
             Spacer()
 
-            if !player.isConnected {
-                Text("RECONNECTING")
-                    .font(.system(size: 11, weight: .heavy, design: .rounded))
-                    .foregroundStyle(AppTheme.ink.opacity(0.5))
-            } else if player.isHost {
+            if player.isConnected && player.isHost {
                 Text("HOST")
                     .font(.system(size: 13, weight: .heavy, design: .rounded))
                     .foregroundStyle(AppTheme.cream)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .background(Capsule().fill(AppTheme.ink))
+            }
+
+            // The lamp is the whole point of the ready gate: you can see at a
+            // glance who the room is waiting on without anyone having to ask.
+            if !player.isConnected {
+                Text("RECONNECTING")
+                    .font(.system(size: 11, weight: .heavy, design: .rounded))
+                    .foregroundStyle(AppTheme.ink.opacity(0.5))
+            } else if player.isReady {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(AppTheme.basil)
+                    .accessibilityLabel("\(player.name) is ready")
+            } else {
+                Image(systemName: "circle.dashed")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(AppTheme.ink.opacity(0.25))
+                    .accessibilityLabel("\(player.name) is not ready yet")
             }
         }
         .padding(.horizontal, 16)

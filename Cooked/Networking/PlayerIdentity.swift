@@ -13,7 +13,7 @@ import Foundation
 
 // MARK: - Identity
 
-struct PlayerIdentity: Codable, Equatable {
+nonisolated struct PlayerIdentity: Codable, Equatable {
     let id: String
     var name: String
 }
@@ -54,7 +54,13 @@ enum PlayerIdentityStore {
 /// Four digits shown on the host's screen. To type it you have to be able to
 /// see that screen, which is the only same-room proof that does not depend on
 /// radios, walls or network configuration.
-struct RoomCode: Codable, Equatable, Hashable, CustomStringConvertible {
+///
+/// `nonisolated` for the same reason the wire types are: under
+/// SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor an unannotated struct is
+/// main-actor bound, and `RoomTicket.fresh` mints a code from a nonisolated
+/// context. It is four characters of value type — there is nothing here that
+/// wants an actor.
+nonisolated struct RoomCode: Codable, Equatable, Hashable, CustomStringConvertible {
 
     let digits: String
 

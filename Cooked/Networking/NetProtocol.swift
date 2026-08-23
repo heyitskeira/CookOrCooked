@@ -29,6 +29,41 @@ nonisolated struct Player: Identifiable, Codable, Equatable, Hashable {
     var isConnected: Bool
     /// Index into `PlayerPalette.colors`, assigned by the host on join.
     var colorIndex: Int
+    /// Pressed Ready in the lobby. The match starts by itself once every
+    /// connected chef — the host included — has said yes, so this is the only
+    /// thing standing between the waiting room and Today's Order.
+    ///
+    /// Cleared on the way into the briefing, so a second round starts from
+    /// nobody-ready rather than everybody-still-ready-from-last-time.
+    var isReady: Bool = false
+
+    // Written by hand rather than synthesised: `isReady` arrived after the
+    // first build, and a synthesised decoder treats a missing key as a failure
+    // even when the property has a default. A guest on an older build sending
+    // a roster-free `hello` would otherwise take the whole frame down.
+    enum CodingKeys: String, CodingKey {
+        case id, name, isHost, isConnected, colorIndex, isReady
+    }
+
+    init(id: String, name: String, isHost: Bool, isConnected: Bool,
+         colorIndex: Int, isReady: Bool = false) {
+        self.id = id
+        self.name = name
+        self.isHost = isHost
+        self.isConnected = isConnected
+        self.colorIndex = colorIndex
+        self.isReady = isReady
+    }
+
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        id = try box.decode(String.self, forKey: .id)
+        name = try box.decode(String.self, forKey: .name)
+        isHost = try box.decode(Bool.self, forKey: .isHost)
+        isConnected = try box.decode(Bool.self, forKey: .isConnected)
+        colorIndex = try box.decode(Int.self, forKey: .colorIndex)
+        isReady = try box.decodeIfPresent(Bool.self, forKey: .isReady) ?? false
+    }
 }
 
 nonisolated enum PlayerPalette {
@@ -144,6 +179,10 @@ nonisolated enum JoinRejection: String, Codable {
     case kitchenFull
     case tooFarAway
     case alreadyStarted
+    /// The handshake named a room id this host has never been. Only a
+    /// rejoining device sends one, so this means the kitchen it remembers is
+    /// gone and something else is now advertising under the same name.
+    case wrongRoom
 
     var message: String {
         switch self {
@@ -151,6 +190,7 @@ nonisolated enum JoinRejection: String, Codable {
         case .kitchenFull:    return "This kitchen is full"
         case .tooFarAway:     return "You're too far from this kitchen"
         case .alreadyStarted: return "This game has already finished"
+        case .wrongRoom:      return "That kitchen has closed for good"
         }
     }
 }
@@ -162,7 +202,18 @@ nonisolated enum NetMessage: Codable {
     // guest -> host
     /// Sent the moment the connection opens. `supportsRanging` tells the host
     /// whether to bother with a UWB check or go straight to the code.
-    case hello(id: String, name: String, code: String, supportsRanging: Bool)
+    ///
+    /// `roomID` and `resume` are nil on a first join and filled in on every
+    /// reconnection afterwards. Together they are what makes a rejoin different
+    /// from a join: the id proves this is the same kitchen we were already in
+    /// (rather than a stranger who happened to pick the same four digits), and
+    /// the token proves we are the device that was admitted to it. A valid pair
+    /// skips the code entry and the UWB check — both of which were already
+    /// passed once, and re-asking for them mid-match is the bad experience.
+    case hello(id: String, name: String, code: String, supportsRanging: Bool,
+               roomID: String?, resume: String?)
+    /// "I'm ready" / "actually, wait." Only meaningful in the lobby.
+    case ready(Bool)
     /// Archived NIDiscoveryToken, exchanged only during join verification.
     case rangingToken(Data)
     case moveTo(x: Double, y: Double, station: String?, isBusy: Bool)
@@ -221,7 +272,10 @@ nonisolated enum NetMessage: Codable {
     /// has the roster, so it can find the name and the colour itself.
     case stationDenied(station: String, holderID: String)
     case rangingRequest
-    case joinAccepted(player: Player)
+    /// You're in. `roomID` and `resume` are the guest's ticket back into this
+    /// exact kitchen if the connection — or the host's whole app — goes away.
+    /// Both are written to disk on receipt.
+    case joinAccepted(player: Player, roomID: String, resume: String)
     case joinRejected(reason: JoinRejection)
     case lobby(kitchenName: String, maxPlayers: Int, players: [Player])
     /// Leave the lobby and open the recipe book. The clock is NOT running yet —
@@ -231,5 +285,24 @@ nonisolated enum NetMessage: Codable {
     /// starts. Split from `start` so that reading the recipe never costs the
     /// team any of their two minutes.
     case beginCooking
+    /// Everyone is ready — the match starts in N. `nil` cancels a countdown
+    /// somebody interrupted by un-readying or dropping out; 0 means go, and is
+    /// followed immediately by `start`.
+    case startCountdown(seconds: Int?)
+    /// Stop the kitchen where it is. Sent when the host itself has to step
+    /// away, and again to any chef who reconnects while the freeze is still on
+    /// so they land in the same held breath as everyone else.
+    ///
+    /// Note this does NOT change the phase: a paused match is still a match,
+    /// still on the same screen, just not running. See `KitchenSession.isPaused`.
+    case paused
+    /// The host is back. Counts down 3, 2, 1 and then 0, which is the actual
+    /// "go" — broadcasting each number instead of a start time means no device
+    /// has to agree with any other about what the clock says.
+    case resumeCountdown(seconds: Int)
+    /// The host shut the kitchen on purpose. Distinct from simply vanishing:
+    /// there is no point freezing and waiting ninety seconds for someone who
+    /// has already walked out.
+    case kitchenClosed
     case snapshot(GameSnapshot)
 }

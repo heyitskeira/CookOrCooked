@@ -136,10 +136,20 @@ struct KitchenGameView: View {
                     .zIndex(2)
                 }
 
-                if session.phase == .hostLeft {
-                    hostLeftBanner
-                } else if let player = session.localPlayer, !player.isConnected {
-                    reconnectingBanner
+                // The kitchen is held still because the host stepped away. This
+                // sits above everything except the end screen: it has to cover
+                // the station popups, which are ordinary SwiftUI views and are
+                // otherwise perfectly happy to be tapped mid-freeze.
+                // "Closed" is tested first on purpose. A closed kitchen has a
+                // way out and a frozen one does not, so if the session ever
+                // manages to be both at once the player must get the screen
+                // with the button on it.
+                if let closed = closedReason {
+                    KitchenClosedOverlay(reason: closed, onDone: leaveKitchen)
+                        .zIndex(4)
+                } else if session.isFrozen {
+                    PausedOverlay(session: session, onLeave: leaveKitchen)
+                        .zIndex(4)
                 }
 
                 // Trigger: top-left, head chef only, hidden while already open.
@@ -162,12 +172,52 @@ struct KitchenGameView: View {
                 }
             }
             .onAppear { build(size: geo.size) }
+            // The scene has its own clock, and SwiftUI is the only thing that
+            // sees the session change. `initial: true` covers the case that
+            // matters most: a chef who reconnects into a kitchen that is
+            // already frozen builds the scene *after* the pause began.
+            .onChange(of: session.isFrozen, initial: true) { _, frozen in
+                scene?.setFrozen(frozen)
+            }
+        }
+    }
+
+    /// Out of the kitchen and all the way back to the start screen.
+    ///
+    /// The host says goodbye properly rather than just going quiet — otherwise
+    /// every guest freezes and waits out the full ninety seconds for someone
+    /// who is already looking at the menu.
+    private func leaveKitchen() {
+        if session.isHost { session.closeKitchen() } else { session.leave() }
+        NotificationCenter.default.post(name: .returnToStart, object: nil)
+    }
+
+    /// Why the kitchen closed, or nil while it is still open.
+    ///
+    /// Three endings that feel completely different to a player, so they get
+    /// three different sentences — and, importantly, all three get a way out.
+    /// A rejected reconnection used to have none: the player was left staring
+    /// at a still kitchen with a "Reconnecting…" banner that would never clear.
+    private var closedReason: String? {
+        switch session.phase {
+        case .hostLeft:
+            return session.players.contains(where: { $0.isHost && !$0.isConnected })
+                ? "The host didn't come back in time."
+                : "The host closed this kitchen."
+        case .rejected(let reason):
+            return reason.message
+        default:
+            return nil
         }
     }
 
     private func build(size: CGSize) {
         guard scene == nil else { return }
         let made = KitchenScene(size: size)
+        // Set before anything else: a chef who reconnects into an
+        // already-frozen kitchen builds the scene *after* the freeze began, and
+        // `onChange` can't help with a scene that didn't exist when it fired.
+        made.setFrozen(session.isFrozen)
         made.scaleMode = .resizeFill
         made.session = session
         made.inventory = inventory
@@ -194,26 +244,6 @@ struct KitchenGameView: View {
         scene = made
     }
 
-    private var hostLeftBanner: some View {
-        banner("The host left — this kitchen is closed")
-    }
-
-    private var reconnectingBanner: some View {
-        banner("Reconnecting…")
-    }
-
-    private func banner(_ text: String) -> some View {
-        VStack {
-            Spacer()
-            Text(text)
-                .font(.system(size: 16, weight: .bold, design: .rounded))
-                .foregroundStyle(AppTheme.cream)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
-                .background(Capsule().fill(AppTheme.ink.opacity(0.85)))
-                .padding(.bottom, 28)
-        }
-    }
 }
 
 #Preview {

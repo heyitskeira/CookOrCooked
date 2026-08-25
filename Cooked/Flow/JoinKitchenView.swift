@@ -55,6 +55,12 @@ struct JoinKitchenView: View {
             .padding(24)
         }
         .onAppear { session.startBrowsing() }
+        // This screen owns the session, so it also owns shutting it down. On
+        // the game-over path the cover stack collapses from the outside — the
+        // waiting room dismisses, which restarts the browser below, and then
+        // this whole view disappears a frame later. Without this the fresh
+        // NWBrowser would keep running for the rest of the launch.
+        .onDisappear { session.leave() }
         .sheet(item: $pendingKitchen) { kitchen in
             codeEntry(for: kitchen)
         }
@@ -69,6 +75,13 @@ struct JoinKitchenView: View {
         .fullScreenCover(isPresented: $showLobby) {
             WaitingRoomView(session: session)
         }
+        // `onAppear` fires once, so backing out of a kitchen used to leave this
+        // screen showing a list of rooms whose endpoints the transport had
+        // already thrown away — every one of them untappable, with nothing to
+        // refresh them. Coming back from the lobby starts the search again.
+        .onChange(of: showLobby) { _, isShowing in
+            if !isShowing { session.startBrowsing() }
+        }
     }
 
     // MARK: Body states
@@ -81,7 +94,7 @@ struct JoinKitchenView: View {
         case .rejected(let reason):
             rejected(reason)
         case .hostLeft:
-            rejected(nil, text: "The host closed this kitchen")
+            rejected(nil, text: "That kitchen has closed")
         default:
             if session.discovered.isEmpty { searching } else { roomList }
         }
@@ -180,7 +193,7 @@ struct JoinKitchenView: View {
                        style: .filled(background: AppTheme.tomato, foreground: AppTheme.cream)) {
                 guard let code = RoomCode(typedCode) else { return }
                 pendingKitchen = nil
-                session.join(kitchen: kitchen.id, code: code)
+                session.join(kitchen: kitchen, code: code)
             }
             .frame(maxWidth: 300)
             .opacity(RoomCode(typedCode) == nil ? 0.5 : 1)

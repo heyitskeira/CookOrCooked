@@ -8,16 +8,38 @@
 //  report intent (I moved here, I finished this action) and render whatever
 //  the next snapshot says. That keeps four devices agreeing without any
 //  conflict resolution, at the cost of the host being a single point of
-//  failure: if the host leaves, the game ends. Host migration is deliberately
-//  out of scope.
+//  failure. Host migration is still out of scope — but the host going away is
+//  no longer the end of the game.
+//
+//  WHAT HAPPENS WHEN THE HOST DISAPPEARS
+//
+//  It used to be: everyone's socket dies, everyone falls out of the kitchen,
+//  and the host relaunches into a brand new room with a brand new code that
+//  nobody can get back into. Three separate things caused that, and all three
+//  are fixed here.
+//
+//    1. The kitchen is frozen, not closed. Guests set `isPaused`, hold the
+//       phase exactly where it was, and wait `PauseRules.graceSeconds` for the
+//       host to come back. Nothing ticks: not the clock, not the minigames,
+//       not the serve holds.
+//    2. The room has an identity that survives the process. `ticket.roomID`
+//       and the four digits are written to disk (see RoomResume.swift), so a
+//       relaunched host reopens the *same* kitchen rather than a new one.
+//    3. Guests reconnect by kitchen, not by socket. The old code chased the
+//       Bonjour endpoint string, which is regenerated on relaunch; it now
+//       matches on the kitchen's name and proves the room with `roomID`.
 //
 //  Joining is gated twice. The room code proves the guest can see the host's
 //  screen, which is the only same-room evidence that does not depend on
-//  radios or walls. The UWB check is a bonus that fails open.
+//  radios or walls. The UWB check is a bonus that fails open. A *rejoin* skips
+//  both, because a resume token the host itself issued is better evidence than
+//  either — and asking a player to re-type a code to get back into a match
+//  they are already in is exactly the friction this all exists to remove.
 //
 
 import Foundation
 import Combine
+import UIKit   // UIApplication lifecycle notifications only — see watchAppLifecycle
 
 @MainActor
 final class KitchenSession: ObservableObject {
@@ -59,6 +81,30 @@ final class KitchenSession: ObservableObject {
     @Published private(set) var roomCode: RoomCode
     @Published private(set) var errorText: String?
 
+    // MARK: The pause
+    //
+    // A pause is deliberately NOT a phase. The match is still exactly where it
+    // was — same screen, same recipe book or same kitchen — it simply isn't
+    // running. Making it a phase would mean every view that switches on phase
+    // needs a new case, and `GameFlowView` would swap a frozen kitchen for the
+    // recipe book the moment the host blipped.
+
+    /// True while the kitchen is held still waiting for the host to come back.
+    @Published private(set) var isPaused = false
+
+    /// Seconds left before we give up on the host, or nil if we aren't waiting.
+    @Published private(set) var pauseSecondsLeft: Int?
+
+    /// 3… 2… 1… after the host reconnects. Non-nil means still frozen.
+    @Published private(set) var resumeSecondsLeft: Int?
+
+    /// 3… 2… 1… after the last chef presses Ready.
+    @Published private(set) var startSecondsLeft: Int?
+
+    /// Nothing may move, tick, or be reported while this is true. The scene
+    /// reads it to stop its own loop; the views read it to put up an overlay.
+    var isFrozen: Bool { isPaused || resumeSecondsLeft != nil }
+
     /// The station the local player has been *granted*, if any. The scene may
     /// only open a station screen when this matches where the chef is standing.
     /// nil means either not at a station, or still queueing for one.
@@ -92,6 +138,22 @@ final class KitchenSession: ObservableObject {
     var canStart: Bool { isHost && connectedCount >= 2 && phase == .lobby }
     var localPlayer: Player? { players.first { $0.id == localPlayerID } }
 
+    /// Every chef who is actually here has pressed Ready, and there are enough
+    /// of them to cook. This is what starts the match — no host button, because
+    /// "all ready" is already unanimous consent and asking for one more tap
+    /// after that is just a fifth person to wait for.
+    var everyoneReady: Bool {
+        let here = players.filter(\.isConnected)
+        return here.count >= 2 && here.allSatisfy(\.isReady)
+    }
+
+    /// This device's own Ready state, for the button's fill.
+    var isReady: Bool { localPlayer?.isReady ?? false }
+
+    /// The two phases where a match is under way and a dropped player's slot,
+    /// colour and progress must be held rather than thrown away.
+    private var isMidMatch: Bool { phase == .playing || phase == .briefing }
+
     func player(_ id: String) -> Player? { players.first { $0.id == id } }
 
     /// Who reads Today's Order out loud.
@@ -122,6 +184,8 @@ final class KitchenSession: ObservableObject {
     private let transport: KitchenTransport
     private var pump: Task<Void, Never>?
     private var ticker: Timer?
+    /// Tokens for the background/foreground observers. See `watchAppLifecycle`.
+    private var lifecycleWatchers: [any NSObjectProtocol] = []
 
     /// Station the local player is standing at and still waiting for. Kept so
     /// the claim can be re-sent the instant the holder walks away, which is
@@ -165,11 +229,50 @@ final class KitchenSession: ObservableObject {
     private var verifyTimeout: Task<Void, Never>?
     private var joinTimeout: Task<Void, Never>?
 
+    // Host only — room identity and resumption
+    /// This kitchen's durable identity. Written to disk the moment hosting
+    /// starts, so relaunching reopens the same room instead of minting a new
+    /// one with a code nobody has.
+    private var ticket: RoomTicket
+    /// playerID -> the token that lets that device back in without the code or
+    /// the UWB check. Issued once on first admission and reused forever after.
+    private var resumeTokens: [String: String] = [:]
+    /// When the freeze started, so wall-clock timers can be shifted forward by
+    /// exactly as long as nothing was happening. See `rebaseServeClocks`.
+    private var pausedAt: TimeInterval?
+    /// Drives both the ready countdown and the resume countdown — only one can
+    /// ever be running, and starting either must cancel the other.
+    private var countdownTask: Task<Void, Never>?
+    /// Bumped every time a countdown starts or is cancelled, so a cancelled
+    /// task's tidy-up can tell whether it is still the current one.
+    private var countdownGeneration = 0
+    /// Same trick for `closeKitchen`'s deferred teardown, on its own counter so
+    /// unrelated countdown activity can't cancel a shutdown.
+    private var closeGeneration = 0
+    /// True while the listener is up. `startHosting` is called from two places
+    /// on the resume path, and re-advertising tears the Bonjour advert down and
+    /// back up — precisely when frozen guests are hunting for it.
+    private var isAdvertising = false
+    /// Ticks since the room was last written down. Saving on every one of them
+    /// would be ten UserDefaults writes a second for no benefit.
+    private var ticksSinceSave = 0
+
     // Guest only
     private var hostPeer: PeerID?
     private var joiningKitchenID: String?
+    /// The kitchen's *name*, kept because it is the only thing about a host
+    /// that survives its app relaunching. `joiningKitchenID` is a Bonjour
+    /// endpoint string and is regenerated with the process — chasing it was
+    /// why a returning host could never be found again.
+    private var targetKitchenName: String?
+    /// The room we belong to and the token that proves it. Both arrive with
+    /// `joinAccepted` and are written to disk immediately.
+    private var targetRoomID: String?
+    private var resumeToken: String?
     private var submittedCode: RoomCode?
     private var rejoinTask: Task<Void, Never>?
+    /// Counts the ninety seconds of held breath before we give up on the host.
+    private var pauseDeadline: Task<Void, Never>?
 
     // Guest-only throttle bookkeeping for position reports.
     private var lastSentAt: TimeInterval = 0
@@ -196,18 +299,42 @@ final class KitchenSession: ObservableObject {
     /// default argument expressions are evaluated in a nonisolated context,
     /// so constructing a @MainActor object there doesn't compile. Building it
     /// inside the initialiser body is fine — the body is main-actor isolated.
+    /// `resuming` reopens a kitchen this device was already hosting before the
+    /// app went away. Everything that made the room recognisable — its id, its
+    /// four digits, the roster, the colours, the clock, the bowls — comes back,
+    /// which is the entire reason a chef still staring at a frozen kitchen can
+    /// find their way home.
     init(role: Role,
          kitchenName: String = "",
          maxPlayers: Int = 4,
-         transport: KitchenTransport? = nil) {
+         transport: KitchenTransport? = nil,
+         resuming saved: SavedHostRoom? = nil) {
         self.role = role
-        self.kitchenName = kitchenName
-        self.maxPlayers = max(2, min(maxPlayers, PlayerPalette.rgb.count))
         self.transport = transport ?? BonjourTransport()
-        self.roomCode = .random()
         self.localPlayerID = PlayerIdentityStore.current.id
 
-        if role == .host {
+        // Only a host can reopen a room; a saved room handed to a guest session
+        // would give it a ticket it has no business advertising.
+        let restoring = role == .host ? saved : nil
+        if let restoring {
+            self.ticket = restoring.ticket
+            self.kitchenName = restoring.ticket.kitchenName
+            self.maxPlayers = restoring.ticket.maxPlayers
+        } else {
+            let name = kitchenName
+            let cap = max(2, min(maxPlayers, PlayerPalette.rgb.count))
+            self.ticket = .fresh(kitchenName: name, maxPlayers: cap)
+            self.kitchenName = name
+            self.maxPlayers = cap
+        }
+        // Force-unwrap-free: `ticket.code` was produced by RoomCode.random(),
+        // so it is four digits by construction. The fallback only exists
+        // because the initialiser is failable and this one cannot be.
+        self.roomCode = RoomCode(ticket.code) ?? .random()
+
+        if let restoring {
+            restore(restoring)
+        } else if role == .host {
             players = [Player(id: localPlayerID,
                               name: PlayerIdentityStore.current.name,
                               isHost: true,
@@ -220,15 +347,93 @@ final class KitchenSession: ObservableObject {
         listen()
     }
 
+    /// Rebuild the host's authoritative tables from disk.
+    ///
+    /// The match comes back *paused*, always — even if it was saved mid-play.
+    /// The chefs are not here yet; unfreezing before they reconnect would run
+    /// the clock down on an empty kitchen, which is a worse bug than the one
+    /// this whole feature is fixing.
+    private func restore(_ saved: SavedHostRoom) {
+        players = saved.players.map {
+            var player = $0
+            // Nobody is connected across a relaunch, whatever the file says.
+            // The host is the exception: it is, definitionally, here.
+            player.isConnected = player.id == localPlayerID
+            player.isReady = false
+            return player
+        }
+        // A roster with no host in it means the file predates this device
+        // being the host — repair it rather than opening an ownerless kitchen.
+        if !players.contains(where: { $0.id == localPlayerID }) {
+            players.insert(Player(id: localPlayerID,
+                                  name: PlayerIdentityStore.current.name,
+                                  isHost: true, isConnected: true, colorIndex: 0),
+                           at: 0)
+        }
+        resumeTokens = saved.resumeTokens
+        chefs = Dictionary(uniqueKeysWithValues: saved.chefs.map { ($0.playerID, $0) })
+        utensilStock = saved.utensilStock
+        deposited = saved.deposited
+        drawerSlots = saved.drawer
+        stationOutput = saved.stationOutput
+        game.restore(completed: Set(saved.completed), timeRemaining: saved.timeRemaining)
+
+        switch saved.stage {
+        case .lobby:
+            phase = .idle           // startHosting() moves it to .lobby
+        case .briefing:
+            phase = .briefing
+            pauseMatch(announce: false)
+        case .playing:
+            phase = .playing
+            pauseMatch(announce: false)
+        }
+    }
+
     // Task inherits this class's @MainActor isolation, so the stream is
     // consumed on the main actor and no hops are needed here.
     private func listen() {
+        // `transport` is captured, `self` is not: hoisting `guard let self`
+        // above the loop would upgrade the weak capture to a strong one for
+        // the life of the stream — and `BonjourTransport.stop()` deliberately
+        // never finishes its stream, so that life is forever. Every session
+        // ever created would be retained, which matters here because the
+        // lifecycle observers below have no `deinit` to unregister them.
+        let transport = self.transport
         pump = Task { [weak self] in
-            guard let self else { return }
-            for await event in self.transport.events {
+            for await event in transport.events {
+                guard let self else { return }
                 self.handle(event)
             }
         }
+        watchAppLifecycle()
+    }
+
+    /// The session listens for backgrounding itself rather than having every
+    /// screen forward `scenePhase`. Five screens own or observe a session, and
+    /// only one of them would have to remember — putting it here is the
+    /// difference between "handled" and "handled on four screens out of five".
+    ///
+    /// No `deinit` unregisters these. A `@MainActor` class cannot touch its own
+    /// isolated storage from a nonisolated `deinit`, and the observers are
+    /// harmless without one: each closure holds only a weak reference, so once
+    /// the session is gone they fire into nothing. The alternative — a
+    /// notification `AsyncSequence` — hands a non-Sendable `Notification`
+    /// across an isolation boundary, which is a worse trade.
+    private func watchAppLifecycle() {
+        let centre = NotificationCenter.default
+        // Delivered on the main queue, which is the main actor's executor —
+        // the same assumption `BonjourTransport.hop` is built on.
+        lifecycleWatchers = [
+            centre.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+                               object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.handleDidEnterBackground() }
+            },
+            centre.addObserver(forName: UIApplication.willEnterForegroundNotification,
+                               object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.handleWillEnterForeground() }
+            }
+        ]
     }
 
     // MARK: Lifecycle
@@ -237,15 +442,83 @@ final class KitchenSession: ObservableObject {
     /// after init. Ignored once the kitchen is open — renaming a kitchen out
     /// from under connected guests would desync the roster.
     func configure(kitchenName: String, maxPlayers: Int) {
-        guard isHost, phase == .idle else { return }
+        guard isHost, phase == .idle, players.count <= 1 else { return }
         self.kitchenName = kitchenName
         self.maxPlayers = max(2, min(maxPlayers, PlayerPalette.rgb.count))
+        // The ticket carries the name because the name is what a reconnecting
+        // guest browses for — it has to be written down with the room, not left
+        // to be re-derived from a view that may never be built again.
+        ticket.kitchenName = self.kitchenName
+        ticket.maxPlayers = self.maxPlayers
     }
 
     func startHosting() {
-        guard isHost else { return }
+        guard isHost, !isAdvertising else { return }
+        // Opening a kitchen cancels any teardown `closeKitchen` still has in
+        // flight. Backing out of the waiting room and straight back in beats
+        // that 250ms by less than the cover animation takes, and the deferred
+        // `leave()` landing here would stop the transport of the kitchen that
+        // is now on screen — leaving a waiting room that advertises nothing.
+        closeGeneration &+= 1
+        isAdvertising = true
         transport.startHosting(kitchenName: kitchenName)
-        phase = .lobby
+        // A resumed match must not be dragged back to the lobby — it is
+        // already under way, just frozen until the chefs find their way back.
+        if !isMidMatch { phase = .lobby }
+        saveHostRoom()
+    }
+
+    // MARK: Coming back from the background
+    //
+    // iOS suspends the app, and suspension kills the listener, every socket,
+    // and every Timer with it. Nothing restarts them by itself — which meant
+    // the pause feature rescued the dramatic case (the app being killed) while
+    // missing by far the commonest one: somebody taking a phone call.
+    //
+    // These two are wired to UIApplication notifications in `listen()`, so the
+    // session looks after itself rather than needing every screen that owns one
+    // to remember to forward the scene phase.
+
+    /// Only the host freezes on the way out, and only the host.
+    ///
+    /// A guest that froze itself here would have nothing to unfreeze it: the
+    /// host is fine, so no `.resumeCountdown` is ever coming, and a short trip
+    /// to Notification Center doesn't necessarily kill the socket — so the
+    /// reconnect path wouldn't run either. The guest would sit out the full
+    /// ninety seconds and then be ejected from a perfectly healthy match. A
+    /// guest that genuinely loses its connection is caught by `handleLoss`,
+    /// which is the honest signal; a suspended app renders nothing anyway.
+    private func handleDidEnterBackground() {
+        guard isHost, isMidMatch else { return }
+        // Freeze deliberately and say so, while the sockets are still alive
+        // enough to carry it. The alternative is every guest discovering it for
+        // themselves a few seconds later via a dead connection.
+        pauseMatch()
+    }
+
+    private func handleWillEnterForeground() {
+        if isHost {
+            // The listener did not survive suspension. Re-advertise under the
+            // same name, code and room id so the frozen guests — who are
+            // browsing for exactly that — find their way back.
+            guard isAdvertising || isMidMatch else { return }
+            isAdvertising = false
+            startHosting()
+            // If the sockets happened to survive — a very short trip to the
+            // home screen — there is nobody to wait for, so don't sit out the
+            // full ninety seconds before noticing.
+            if isPaused, connectedCount >= players.count { resumeMatch() }
+        } else if isMidMatch, !snapshot.isOver, hostPeer == nil, targetKitchenName != nil {
+            // Our socket is gone too. Start hunting again rather than sitting
+            // on a rejoin loop whose browser was torn down while we were away.
+            //
+            // Gated on being mid-match so a player who already gave up — phase
+            // `.hostLeft`, transport stopped — isn't quietly put back on a
+            // two-second retry loop with no deadline behind it by nothing more
+            // than a trip to the home screen.
+            transport.startBrowsing()
+            if rejoinTask == nil { scheduleRejoin() }
+        }
     }
 
     func startBrowsing() {
@@ -254,26 +527,278 @@ final class KitchenSession: ObservableObject {
         phase = .searching
     }
 
+    // MARK: Ready
+
+    /// Toggle this device's Ready lamp. Guests ask the host; the host decides
+    /// for everyone, so two people readying in the same frame can't produce two
+    /// different opinions about whether the room is unanimous.
+    func setReady(_ ready: Bool) {
+        guard phase == .lobby else { return }
+        if isHost {
+            applyReady(ready, for: localPlayerID)
+        } else if let hostPeer {
+            // Set it locally too, or the lamp lags a whole round trip behind
+            // the thumb. The host's roster broadcast overwrites this a moment
+            // later, so a rejected toggle self-corrects.
+            if let index = players.firstIndex(where: { $0.id == localPlayerID }) {
+                players[index].isReady = ready
+            }
+            transport.send(.ready(ready), to: hostPeer)
+        }
+    }
+
+    private func applyReady(_ ready: Bool, for id: String) {
+        guard isHost, phase == .lobby,
+              let index = players.firstIndex(where: { $0.id == id }),
+              players[index].isReady != ready else { return }
+
+        players[index].isReady = ready
+        broadcastLobby()
+
+        // Un-readying is a veto: it has to be able to stop a countdown that is
+        // already running, otherwise the button is a lie for three seconds.
+        if everyoneReady { beginStartCountdown() } else { cancelCountdown() }
+    }
+
+    /// Everyone said yes — count down and open the book by ourselves.
+    private func beginStartCountdown() {
+        guard isHost, countdownTask == nil else { return }
+        let generation = nextCountdownGeneration()
+        countdownTask = Task { [weak self] in
+            // Every exit from here MUST clear `countdownTask`, including the
+            // "someone un-readied at 1" bail below. A finished-but-non-nil task
+            // fails the guard above forever, and since the ready gate is now the
+            // only way out of the lobby, that would wedge the room permanently.
+            defer { self?.finishCountdown(generation) }
+
+            for remaining in stride(from: PauseRules.startCountdown, through: 1, by: -1) {
+                guard let self, !Task.isCancelled else { return }
+                self.startSecondsLeft = remaining
+                self.transport.broadcast(.startCountdown(seconds: remaining))
+                try? await Task.sleep(for: .seconds(1))
+            }
+            // Re-checked at zero rather than trusted from three seconds ago: a
+            // chef can walk in, drop out, or change their mind mid-count.
+            guard let self, !Task.isCancelled, self.everyoneReady else { return }
+            self.startSecondsLeft = nil
+            self.transport.broadcast(.startCountdown(seconds: 0))
+            self.startCooking()
+        }
+    }
+
+    /// Countdowns are identified by generation rather than by object.
+    ///
+    /// A cancelled task still runs its `defer`, and it does so *after* whatever
+    /// cancelled it has already started the next countdown. Without the
+    /// generation check that late tidy-up would nil out a live task and wedge
+    /// the room — the exact failure the tidy-up exists to prevent.
+    private func nextCountdownGeneration() -> Int {
+        countdownGeneration &+= 1
+        return countdownGeneration
+    }
+
+    /// Tidy up after a countdown however it ended.
+    ///
+    /// If it was interrupted — someone un-readied, or a fourth chef walked in
+    /// mid-count — the guests are still showing a number, so they get an
+    /// explicit "never mind". Without it their Ready button stays replaced by a
+    /// frozen "1" for the rest of the lobby.
+    private func finishCountdown(_ generation: Int) {
+        guard countdownGeneration == generation else { return }
+        countdownTask = nil
+        guard startSecondsLeft != nil else { return }
+        startSecondsLeft = nil
+        transport.broadcast(.startCountdown(seconds: nil))
+    }
+
+    private func cancelCountdown() {
+        _ = nextCountdownGeneration()
+        countdownTask?.cancel()
+        countdownTask = nil
+        let wasStarting = startSecondsLeft != nil
+        startSecondsLeft = nil
+        resumeSecondsLeft = nil
+        if isHost && wasStarting { transport.broadcast(.startCountdown(seconds: nil)) }
+    }
+
+    // MARK: Pause and resume
+    //
+    // A frozen kitchen is the whole point of this section. The alternative —
+    // what the game used to do — is that the host vanishing ends everyone
+    // else's match at whatever moment the Wi-Fi happened to hiccup. Freezing
+    // costs nothing to the players who are still there and turns a lost game
+    // into a ninety-second wait.
+
+    /// Stop the kitchen where it stands. Host side.
+    ///
+    /// `announce` is false when the pause is part of rebuilding a saved room:
+    /// there is nobody connected yet to tell, and broadcasting into an empty
+    /// listener is just noise.
+    private func pauseMatch(announce: Bool = true) {
+        // A finished match is not a match. Nothing moves the phase away from
+        // `.playing` when the clock runs out, so without `!game.isOver` the
+        // last guest leaving would freeze the kitchen *over the results
+        // screen* — the pause card outranks it — and then close the room
+        // ninety seconds later while the host was still reading their score.
+        guard isHost, isMidMatch, !game.isOver else { return }
+
+        // Note the deliberate absence of a plain `!isPaused` guard. A kitchen
+        // three seconds into its resume countdown when the chefs drop *again*
+        // is still nominally paused, and bailing here would let that countdown
+        // run to completion and unfreeze a room with nobody left in it.
+        guard !isPaused || resumeSecondsLeft != nil else { return }
+
+        ticker?.invalidate()
+        ticker = nil
+        cancelCountdown()
+        // Only stamp the freeze start on the way *in*. Re-stamping it when an
+        // already-paused kitchen re-pauses would throw away the elapsed time
+        // that `rebaseServeClocks` needs to shift the serve holds by.
+        if pausedAt == nil { pausedAt = Date.timeIntervalSinceReferenceDate }
+        isPaused = true
+        if announce { transport.broadcast(.paused) }
+        beginPauseDeadline()
+        saveHostRoom()
+    }
+
+    /// The chefs are back. Count everyone in and start the clock again.
+    func resumeMatch() {
+        guard isHost, isPaused, isMidMatch, connectedCount >= 2 else { return }
+        cancelPauseDeadline()
+        rebaseServeClocks()
+        runResumeCountdown()
+    }
+
+    /// Wall-clock timestamps have no idea the game stopped.
+    ///
+    /// `serveHolds` and `serveChargeStartedAt` are absolute times, and
+    /// `resolveServe` expires a hold that has been waiting longer than
+    /// `gatherWindow`. Without this, ninety seconds of pause silently expires
+    /// every hold in the room and the serve bar everyone was halfway through
+    /// empties itself the instant play resumes. Shifting them forward by the
+    /// length of the freeze makes the pause invisible to that logic.
+    private func rebaseServeClocks() {
+        guard let pausedAt else { return }
+        let frozenFor = Date.timeIntervalSinceReferenceDate - pausedAt
+        serveHolds = serveHolds.mapValues { $0 + frozenFor }
+        if let started = serveChargeStartedAt {
+            serveChargeStartedAt = started + frozenFor
+        }
+        self.pausedAt = nil
+    }
+
+    private func runResumeCountdown() {
+        guard resumeSecondsLeft == nil else { return }   // already counting in
+        countdownTask?.cancel()
+        let generation = nextCountdownGeneration()
+        countdownTask = Task { [weak self] in
+            defer { self?.finishCountdown(generation) }
+
+            for remaining in stride(from: PauseRules.resumeCountdown, through: 1, by: -1) {
+                guard let self, !Task.isCancelled else { return }
+                self.resumeSecondsLeft = remaining
+                self.transport.broadcast(.resumeCountdown(seconds: remaining))
+                try? await Task.sleep(for: .seconds(1))
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.resumeSecondsLeft = nil
+
+            // Three seconds is long enough for the kitchen to empty out again.
+            // Unfreezing anyway would leave the host cooking alone against a
+            // clock nobody else can see — worse than staying paused.
+            guard self.connectedCount >= 2 else {
+                self.transport.broadcast(.paused)
+                self.pausedAt = Date.timeIntervalSinceReferenceDate
+                self.beginPauseDeadline()
+                self.saveHostRoom()
+                return
+            }
+
+            self.transport.broadcast(.resumeCountdown(seconds: 0))
+            self.isPaused = false
+            if self.phase == .playing { self.startTicking() }
+            self.saveHostRoom()
+        }
+    }
+
+    /// Shut the kitchen deliberately, and say so.
+    ///
+    /// Distinct from simply going quiet: a guest that hears this stops waiting
+    /// immediately instead of freezing for ninety seconds on a host who has
+    /// already walked away.
+    func closeKitchen() {
+        guard isHost else { return }
+        transport.broadcast(.kitchenClosed)
+        RoomResumeStore.clearHost()
+        // Stop advertising immediately even though the sockets linger, so the
+        // 250ms below can't be spent letting a new guest into a kitchen that
+        // has already said goodbye.
+        isAdvertising = false
+        // Sockets are torn down a beat later, exactly as in `reject`: cancelling
+        // a connection is not obliged to flush what was already queued on it,
+        // and a goodbye nobody receives leaves the room frozen for ninety
+        // seconds waiting for a host who is already gone.
+        closeGeneration &+= 1
+        let generation = closeGeneration
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            // If the session has been reopened in the meantime — backing out
+            // and straight into a new kitchen is two taps — this deferred
+            // teardown must not reach in and stop the transport of a session
+            // that has already moved on.
+            guard let self, self.closeGeneration == generation else { return }
+            self.leave()
+        }
+    }
+
     /// Guest taps a kitchen and supplies the code the host is displaying.
     ///
     /// Bonjour lists ghosts. A host killed by Xcode's stop button never sends
     /// a goodbye packet, so its advert lingers in the mDNS cache for minutes.
     /// Tapping one would otherwise sit on a spinner for the full TCP timeout,
     /// so we give the host a few seconds to say literally anything back.
-    func join(kitchen id: String, code: RoomCode) {
+    func join(kitchen: DiscoveredKitchen, code: RoomCode) {
         guard !isHost else { return }
         errorText = nil
-        joiningKitchenID = id
+        // Belt and braces alongside `leave()`: this is a *fresh* join, so any
+        // membership of a previous room must not ride along in the handshake.
+        targetRoomID = nil
+        resumeToken = nil
+        joiningKitchenID = kitchen.id
+        // The name, not just the endpoint. When the host's app relaunches its
+        // Bonjour endpoint is brand new and the id we were handed is worthless
+        // — the name is the only thread back to the same kitchen.
+        targetKitchenName = kitchen.name
         submittedCode = code
         phase = .verifying("Connecting…")
-        transport.connect(toKitchen: id)
+        transport.connect(toKitchen: kitchen.id)
 
         joinTimeout?.cancel()
         joinTimeout = Task { [weak self] in
             try? await Task.sleep(for: .seconds(6))
             guard let self, !Task.isCancelled, self.phase.isVerifying else { return }
-            self.abandonJoin(kitchenID: id)
+            self.abandonJoin(kitchenID: kitchen.id)
         }
+    }
+
+    /// Walk straight back into the kitchen this device was in when the app
+    /// last closed — no room list, no code to re-type.
+    ///
+    /// The saved room supplies everything the handshake needs: which kitchen to
+    /// look for, which room it must actually be, and the token proving we were
+    /// already admitted to it. If the host is still up we are back in seconds;
+    /// if it isn't, `scheduleRejoin` keeps looking until the caller gives up.
+    func resumeAsGuest(_ saved: SavedGuestRoom) {
+        guard !isHost else { return }
+        errorText = nil
+        targetKitchenName = saved.kitchenName
+        targetRoomID = saved.roomID
+        resumeToken = saved.resumeToken
+        submittedCode = RoomCode(saved.code)
+        kitchenName = saved.kitchenName
+        phase = .verifying("Looking for \(saved.kitchenName)…")
+        transport.startBrowsing()
+        scheduleRejoin()
     }
 
     private func abandonJoin(kitchenID: String) {
@@ -303,8 +828,13 @@ final class KitchenSession: ObservableObject {
         occupancy.removeAll()
         heldStation = nil
         pendingClaim = nil
+        // Ready lamps belong to the lobby. Carrying them into the match would
+        // mean a second round starts with everyone still ready from the first.
+        for index in players.indices { players[index].isReady = false }
         transport.broadcast(.start)
         phase = .briefing
+        broadcastLobby()
+        saveHostRoom()
     }
 
     /// Recipe book → kitchen. Called by the head chef's START signpost, and
@@ -321,16 +851,27 @@ final class KitchenSession: ObservableObject {
         guard isHost, phase == .briefing else { return }
         transport.broadcast(.beginCooking)
         phase = .playing
-        startTicking()
+        // A briefing that was frozen mid-read resumes into a *paused* kitchen,
+        // not a running one — the head chef pressing START while half the room
+        // is still reconnecting would start their clock without them.
+        if !isPaused { startTicking() }
+        saveHostRoom()
     }
 
     /// Closes the kitchen but keeps this object usable — the views that own it
     /// outlive a dismissal, so a player backing out and starting again must get
     /// a working session, not a dead one.
     func leave() {
+        // Invalidates any teardown `closeKitchen` has in flight — this one is
+        // happening now, and a second one landing 250ms into the next kitchen
+        // would stop a transport that has just been started.
+        closeGeneration &+= 1
         rejoinTask?.cancel()
+        rejoinTask = nil
         verifyTimeout?.cancel()
         joinTimeout?.cancel()
+        cancelPauseDeadline()
+        cancelCountdown()
         ticker?.invalidate()
         ticker = nil
         gate?.finish()
@@ -349,7 +890,115 @@ final class KitchenSession: ObservableObject {
         peerToPlayer.removeAll()
         playerToPeer.removeAll()
         hostPeer = nil
+        isAdvertising = false
+        isPaused = false
+        pausedAt = nil
+        pauseSecondsLeft = nil
+        resumeSecondsLeft = nil
+        startSecondsLeft = nil
+        // Every trace of which kitchen we belonged to. Views keep their session
+        // as a @StateObject across a dismissal, so backing out of one kitchen
+        // and into another reuses this object — and a leftover `targetRoomID`
+        // would have us introduce ourselves to the new host as a member of the
+        // old room, which it would (correctly) reject as `.wrongRoom`.
+        targetKitchenName = nil
+        joiningKitchenID = nil
+        targetRoomID = nil
+        resumeToken = nil
+        submittedCode = nil
+        // A guest's roster belongs to the kitchen it came from. Leaving it
+        // behind would show the old room's chefs in the next lobby until the
+        // first broadcast arrived. The host keeps its own roster — that is the
+        // room, and `configure` guards on it being a party of one.
+        if isHost {
+            // A host that leaves and starts again is opening a *new* kitchen,
+            // so it gets a new room id, new digits and a clean set of tables.
+            // Reusing the old ones would let a chef from the previous game walk
+            // straight back in on a stale resume token, into a half-cooked
+            // recipe. (The roster keeps its single host entry, which is what
+            // `configure` checks to decide the kitchen is still unopened.)
+            ticket = .fresh(kitchenName: kitchenName, maxPlayers: maxPlayers)
+            roomCode = RoomCode(ticket.code) ?? roomCode
+            resumeTokens.removeAll()
+            game.reset()
+            deposited.removeAll()
+            stationOutput.removeAll()
+            drawerSlots = Array(repeating: nil, count: Drawer.slotCount)
+            utensilStock = StoragePantry.defaultUtensilStock
+            players = players.filter { $0.id == localPlayerID }
+            for index in players.indices { players[index].isReady = false }
+        } else {
+            // A guest's roster belongs to the kitchen it came from. Leaving it
+            // behind would show the old room's chefs in the next lobby until
+            // the first broadcast arrived.
+            players.removeAll()
+            // The rows too. `transport.stop()` above throws away the endpoints
+            // behind them, so every kitchen still listed is now untappable —
+            // better an empty "looking for kitchens…" than a list that fails.
+            discovered.removeAll()
+        }
+        chefs = chefs.filter { isHost && $0.key == localPlayerID }
+        snapshot = .empty
+        errorText = nil
+        // Walking out on purpose means there is nothing to come back to. Any
+        // other exit — a crash, a lock screen, a dead socket — deliberately
+        // leaves the written-down room alone, because that file is the only
+        // way back into it.
+        if isHost { RoomResumeStore.clearHost() } else { RoomResumeStore.clearGuest() }
         phase = .idle
+    }
+
+    // MARK: Writing the room down
+
+    /// Snapshot the host's authoritative tables to disk.
+    ///
+    /// Called on every transition that changes what a returning chef would
+    /// need, plus every couple of seconds while the clock runs. The cost is one
+    /// small JSON blob into UserDefaults; the benefit is that a host whose app
+    /// is killed can reopen the *same* kitchen rather than a new one nobody has
+    /// the code for.
+    private func saveHostRoom() {
+        guard isHost else { return }
+        let stage: SavedHostRoom.Stage
+        switch phase {
+        case .briefing: stage = .briefing
+        case .playing:  stage = .playing
+        case .lobby:    stage = .lobby
+        default:        return      // idle, rejected, hostLeft — nothing to keep
+        }
+        // A finished match is not resumable, and offering to reopen it would
+        // drop everyone back into an end screen they already dismissed.
+        guard !game.isOver else {
+            RoomResumeStore.clearHost()
+            return
+        }
+        RoomResumeStore.saveHost(
+            SavedHostRoom(ticket: ticket,
+                          stage: stage,
+                          players: players,
+                          resumeTokens: resumeTokens,
+                          completed: Array(game.completed),
+                          timeRemaining: game.timeRemaining,
+                          chefs: players.compactMap { chefs[$0.id] },
+                          utensilStock: utensilStock,
+                          deposited: deposited,
+                          drawer: drawerSlots,
+                          stationOutput: stationOutput,
+                          savedAt: Date()))
+    }
+
+    private func saveGuestRoom() {
+        guard !isHost,
+              let roomID = targetRoomID,
+              let token = resumeToken,
+              let code = submittedCode?.digits else { return }
+        RoomResumeStore.saveGuest(
+            SavedGuestRoom(roomID: roomID,
+                           code: code,
+                           kitchenName: targetKitchenName ?? kitchenName,
+                           resumeToken: token,
+                           wasMidMatch: isMidMatch,
+                           savedAt: Date()))
     }
 
     // MARK: Reports from KitchenScene
@@ -358,6 +1007,10 @@ final class KitchenSession: ObservableObject {
     /// throttle to roughly the host's broadcast rate; sending every frame
     /// floods the socket with positions nobody will ever render.
     func reportPosition(x: Double, y: Double, station: String?, isBusy: Bool) {
+        // Nobody moves in a frozen kitchen. The scene stops its own loop too,
+        // but a report that slipped through would be rebroadcast to everyone
+        // and slide one chef across a still frame.
+        guard !isFrozen else { return }
         if isHost {
             chefs[localPlayerID] = ChefSnapshot(playerID: localPlayerID, x: x, y: y,
                                                 station: station, isBusy: isBusy)
@@ -384,6 +1037,9 @@ final class KitchenSession: ObservableObject {
         // could end the game as a win with nobody gathered — the exact thing
         // the ritual exists to prevent. See `resolveServe`.
         guard actionID != ServeRitual.actionID else { return }
+        // Minigames are stopped while frozen, so anything arriving here during
+        // a pause finished on a clock that was supposed to be off.
+        guard !isFrozen else { return }
 
         if isHost {
             guard let action = Recipe.action(actionID) else { return }
@@ -406,6 +1062,7 @@ final class KitchenSession: ObservableObject {
 
     /// Called by the scene as the chef walks in and out of the circle.
     func reportServeReady(_ inZone: Bool) {
+        guard !isFrozen else { return }
         // Edge-triggered, but reconciled against what the host actually thinks.
         // The host wipes the zone on a disconnect and again after a serve, and
         // a purely local flag would then never speak up again — leaving a chef
@@ -423,6 +1080,10 @@ final class KitchenSession: ObservableObject {
 
     /// Called as this device's SERVE button goes down and comes back up.
     func setServeHold(_ holding: Bool) {
+        // Letting go still counts while frozen — a thumb lifted during the
+        // pause is a thumb that is off the button when play resumes. Only new
+        // presses are refused.
+        guard !isFrozen || !holding else { return }
         guard holding != lastSentServeHold else { return }
         lastSentServeHold = holding
 
@@ -580,6 +1241,9 @@ final class KitchenSession: ObservableObject {
     /// Called by KitchenScene the moment a chef finishes walking to a station.
     /// The station screen must not open until `heldStation` comes back matching.
     func claimStation(_ station: StationID) {
+        // A lock handed out during a freeze would be held by someone who can't
+        // use it, in a kitchen where nobody can see them holding it.
+        guard !isFrozen else { return }
         guard phase == .playing else {
             // Offline or pre-game there is nobody to contend with.
             heldStation = station
@@ -846,7 +1510,10 @@ final class KitchenSession: ObservableObject {
     }
 
     private func tick() {
-        guard isHost else { return }
+        // Belt and braces: `pauseMatch` invalidates the ticker, but a timer
+        // already in flight when it did would otherwise steal one more tenth of
+        // a second off a clock that is supposed to be stopped.
+        guard isHost, !isFrozen else { return }
         game.tick(0.1)
 
         // A lock held by a player who has since vanished from the roster would
@@ -883,9 +1550,21 @@ final class KitchenSession: ObservableObject {
         shot.stationOutput = stationOutput
         snapshot = shot
         transport.broadcast(.snapshot(shot))
+
+        // Write the room down a couple of times a second. Ten UserDefaults
+        // writes a second would be silly; losing two seconds of progress when
+        // the app is killed is not worth noticing.
+        ticksSinceSave += 1
+        if ticksSinceSave >= 20 {
+            ticksSinceSave = 0
+            saveHostRoom()
+        }
+
         if game.isOver {
             ticker?.invalidate()
             ticker = nil
+            // A finished match is not something to be resumed into.
+            RoomResumeStore.clearHost()
         }
     }
 
@@ -895,14 +1574,25 @@ final class KitchenSession: ObservableObject {
         switch event {
         case .discoveryChanged(let kitchens):
             discovered = kitchens
+            // Don't make a reconnecting player wait out the two-second retry
+            // when the kitchen they're looking for has just this moment
+            // reappeared in the browse results.
+            //
+            // Gated on `rejoinTask` rather than on having a target: a *first*
+            // join also has a target the whole time it is handshaking, and
+            // connecting again on top of that would leave the host holding two
+            // sockets for one chef.
+            if rejoinTask != nil, hostPeer == nil { attemptRejoin() }
 
         case .connectedToHost(let peer):
             hostPeer = peer
-            phase = .verifying("Checking the code…")
+            phase = .verifying(resumeToken == nil ? "Checking the code…" : "Getting you back in…")
             transport.send(.hello(id: localPlayerID,
                                   name: PlayerIdentityStore.current.name,
                                   code: submittedCode?.digits ?? "",
-                                  supportsRanging: ProximityGate.isSupported),
+                                  supportsRanging: ProximityGate.isSupported,
+                                  roomID: targetRoomID,
+                                  resume: resumeToken),
                            to: peer)
 
         case .peerConnected:
@@ -920,6 +1610,15 @@ final class KitchenSession: ObservableObject {
             // drop back to the list rather than stranding the guest on a
             // spinner that will never resolve.
             if phase.isVerifying { phase = .searching }
+            // And put the browser back up. `BonjourTransport.stop()` empties
+            // its endpoint table, so after backing out of one kitchen every
+            // row still on screen points at an endpoint the transport can no
+            // longer resolve — tapping any of them fails here, forever, with
+            // nothing left to repopulate the list. This is that repopulation.
+            if !isHost, hostPeer == nil, phase != .idle,
+               !phase.isRejected, phase != .hostLeft {
+                transport.startBrowsing()
+            }
         }
     }
 
@@ -930,10 +1629,15 @@ final class KitchenSession: ObservableObject {
 
         // ---- host side ----
 
-        case .hello(let id, let name, let code, let supportsRanging):
+        case .hello(let id, let name, let code, let supportsRanging, let roomID, let resume):
             guard isHost else { return }
-            admitOrReject(peer: peer, id: id, name: name,
-                          code: code, supportsRanging: supportsRanging)
+            admitOrReject(peer: peer, id: id, name: name, code: code,
+                          supportsRanging: supportsRanging,
+                          roomID: roomID, resume: resume)
+
+        case .ready(let ready):
+            guard isHost, let id = peerToPlayer[peer] else { return }
+            applyReady(ready, for: id)
 
         case .moveTo(let x, let y, let station, let isBusy):
             guard isHost, let id = peerToPlayer[peer] else { return }
@@ -995,12 +1699,45 @@ final class KitchenSession: ObservableObject {
         case .rangingRequest:
             break   // token arrives immediately after; nothing to do
 
-        case .joinAccepted(let player):
+        case .joinAccepted(let player, let roomID, let resume):
             hostPeer = peer
-            phase = .lobby
-            if !players.contains(where: { $0.id == player.id }) { players.append(player) }
+            // We're in — stop counting down to giving up, and stop hunting.
+            rejoinTask?.cancel()
+            rejoinTask = nil
+            cancelPauseDeadline()
+            targetRoomID = roomID
+            resumeToken = resume
+            // We are back in a kitchen that is, as far as we know, running. Any
+            // freeze we were holding was ours — our own socket died, or we were
+            // waiting on a host who has now answered — so it ends here.
+            //
+            // If the kitchen is in fact still paused, `.paused` arrives on this
+            // same connection immediately after and freezes us again. TCP and
+            // the transport's ordered hop guarantee it lands after this, which
+            // is the only reason clearing first is safe.
+            isPaused = false
+            resumeSecondsLeft = nil
+            saveGuestRoom()
+            // Only a fresh join lands in the lobby. A reconnection is caught up
+            // by the `start`/`beginCooking`/`paused` messages that follow, and
+            // bouncing through `.lobby` on the way would flash the waiting room
+            // over a match already in progress.
+            if !isMidMatch { phase = .lobby }
+            if let index = players.firstIndex(where: { $0.id == player.id }) {
+                players[index] = player
+            } else {
+                players.append(player)
+            }
 
         case .joinRejected(let reason):
+            // A reconnection that gets turned away is final: the kitchen we
+            // remember is not the kitchen that answered. Stop retrying, or we
+            // spend the next ninety seconds being rejected every two.
+            rejoinTask?.cancel()
+            rejoinTask = nil
+            cancelPauseDeadline()
+            unfreeze()
+            RoomResumeStore.clearGuest()
             phase = .rejected(reason)
             transport.disconnect(peer)
 
@@ -1013,10 +1750,56 @@ final class KitchenSession: ObservableObject {
         case .start:
             guard !isHost else { return }
             phase = .briefing
+            startSecondsLeft = nil
+            // Re-written now the match is under way, so a relaunch offers to
+            // walk us back in rather than treating this as an abandoned lobby.
+            saveGuestRoom()
 
         case .beginCooking:
             guard !isHost else { return }
             phase = .playing
+            saveGuestRoom()
+
+        case .startCountdown(let seconds):
+            guard !isHost else { return }
+            startSecondsLeft = (seconds ?? 0) > 0 ? seconds : nil
+
+        case .paused:
+            guard !isHost else { return }
+            // Sent both when the host steps away mid-match and to anyone who
+            // reconnects while the freeze is still on, so a returning chef
+            // lands in the same held breath as everyone else rather than alone
+            // in a kitchen that looks live but isn't.
+            freezeForHost()
+
+        case .resumeCountdown(let seconds):
+            guard !isHost else { return }
+            if seconds > 0 {
+                // The deadline deliberately keeps running through the count.
+                // The guest has no local timer for the resume — it is driven
+                // entirely by these broadcasts — so a host that dies silently
+                // between "3" and "0" (a crash or a yanked Wi-Fi sends no FIN,
+                // so no socket death to notice) would strand everyone on "3"
+                // until TCP keepalive gave up minutes later. It stays hidden:
+                // the overlay shows the countdown, not the bar, while it runs.
+                resumeSecondsLeft = seconds
+            } else {
+                cancelPauseDeadline()
+                resumeSecondsLeft = nil
+                isPaused = false
+            }
+
+        case .kitchenClosed:
+            guard !isHost else { return }
+            // The host left on purpose. No freeze, no ninety seconds — there is
+            // nothing to wait for.
+            rejoinTask?.cancel()
+            rejoinTask = nil
+            cancelPauseDeadline()
+            unfreeze()
+            RoomResumeStore.clearGuest()
+            transport.stop()
+            phase = .hostLeft
 
         case .stationGranted(let station):
             // Only accept a grant for the station we're actually still queued
@@ -1060,6 +1843,10 @@ final class KitchenSession: ObservableObject {
         case .snapshot(let shot):
             guard !isHost else { return }
             snapshot = shot
+            // A finished match is not resumable, so the ticket back into it is
+            // dead weight — and leaving it would have the start screen offering
+            // to rejoin a game everyone already saw the results of.
+            if shot.isOver { RoomResumeStore.clearGuest() }
             // A station we're queued for may have just freed up.
             retryPendingClaim()
             // The host is the authority on who holds what, so if it says we
@@ -1079,9 +1866,24 @@ final class KitchenSession: ObservableObject {
     // MARK: Host — admission
 
     private func admitOrReject(peer: PeerID, id: String, name: String,
-                               code: String, supportsRanging: Bool) {
+                               code: String, supportsRanging: Bool,
+                               roomID: String?, resume: String?) {
+        // A device that names a room is reconnecting. If it names the wrong
+        // one, its kitchen is gone and something else is advertising under the
+        // same name — say so plainly instead of letting a code collision drop
+        // it into a stranger's game.
+        if let roomID, roomID != ticket.roomID {
+            reject(peer, .wrongRoom)
+            return
+        }
+
+        // A token this host issued is stronger evidence than the code: it can
+        // only exist because this exact device was already admitted to this
+        // exact room. That is what lets a reconnection skip the four digits.
+        let hasTicketBack = resume != nil && resumeTokens[id] == resume
+
         // Cheap checks first — no reason to spin up a radio to reject a typo.
-        guard code == roomCode.digits else {
+        guard hasTicketBack || code == roomCode.digits else {
             reject(peer, .wrongCode)
             return
         }
@@ -1089,7 +1891,7 @@ final class KitchenSession: ObservableObject {
             reject(peer, .alreadyStarted)
             return
         }
-        let returning = players.contains { $0.id == id }
+        let returning = hasTicketBack || players.contains { $0.id == id }
         if !returning && players.count >= maxPlayers {
             reject(peer, .kitchenFull)
             return
@@ -1187,6 +1989,10 @@ final class KitchenSession: ObservableObject {
             // Returning player reclaims their original slot and colour.
             players[index].isConnected = true
             players[index].name = name
+            // Back from a drop is not the same as back from thinking about it:
+            // a returning chef has to press Ready again, so the lobby can't
+            // auto-start on a lamp they lit before they disappeared.
+            if phase == .lobby { players[index].isReady = false }
             player = players[index]
         } else {
             let used = Set(players.map(\.colorIndex))
@@ -1200,9 +2006,24 @@ final class KitchenSession: ObservableObject {
             chefs[id] = ChefSnapshot(playerID: id, x: Double(spawn.x), y: Double(spawn.y),
                                      station: nil, isBusy: false)
         }
+        // Anyone arriving in the lobby — new face or returning one — lands
+        // not-ready, so a room that was unanimous a second ago isn't any more.
+        // Stopping the countdown here, rather than letting it run to zero and
+        // bail, is what stops everyone watching "3… 2… 1…" and then nothing.
+        if phase == .lobby { cancelCountdown() }
         peerToPlayer[peer] = id
         playerToPeer[id] = peer
-        transport.send(.joinAccepted(player: player), to: peer)
+
+        // Issued once and kept for the life of the room. Reusing it means a
+        // player can drop and return as many times as they like — including
+        // across the host's own app relaunch, since the tokens are saved with
+        // the room — without ever seeing the code screen again.
+        let token = resumeTokens[id] ?? UUID().uuidString
+        resumeTokens[id] = token
+        transport.send(.joinAccepted(player: player,
+                                     roomID: ticket.roomID,
+                                     resume: token), to: peer)
+
         // Catch a late arrival up to wherever everyone else already is. A guest
         // admitted during the briefing gets the book; one admitted mid-game
         // skips it, because the kitchen is already open and the clock is
@@ -1217,7 +2038,16 @@ final class KitchenSession: ObservableObject {
         default:
             break
         }
+        // ...and if the kitchen is currently holding its breath, they hold it
+        // too. Landing in a live-looking kitchen that nobody else can move in
+        // is worse than landing in an obviously frozen one.
+        if isPaused { transport.send(.paused, to: peer) }
+
         broadcastLobby()
+        saveHostRoom()
+
+        // Everyone who was here is here again — start the 3, 2, 1.
+        if isPaused, connectedCount >= max(2, players.count) { resumeMatch() }
     }
 
     private func reject(_ peer: PeerID, _ reason: JoinRejection) {
@@ -1255,7 +2085,7 @@ final class KitchenSession: ObservableObject {
             // unwinnable for everyone still in the kitchen.
             releaseAll(for: id)
 
-            if phase == .playing || phase == .briefing {
+            if isMidMatch {
                 // Mid-game: hold the slot so their chef doesn't vanish from the
                 // kitchen and the recipe stays winnable. They can reclaim it.
                 //
@@ -1266,12 +2096,22 @@ final class KitchenSession: ObservableObject {
                 if let index = players.firstIndex(where: { $0.id == id }) {
                     players[index].isConnected = false
                 }
+                // Last one out freezes the kitchen. A host cooking alone while
+                // everybody else reconnects is burning a clock they can't win
+                // on — far more likely to be the host's own Wi-Fi that dropped
+                // than three guests leaving at once.
+                if connectedCount <= 1 { pauseMatch() }
             } else {
                 // In the lobby: free the slot for someone else, as requested.
                 players.removeAll { $0.id == id }
                 chefs.removeValue(forKey: id)
+                // Re-ask the question rather than only cancelling: the chef who
+                // just walked out may have been the one everybody was waiting
+                // on, in which case the room is unanimous now that they're gone.
+                if everyoneReady { beginStartCountdown() } else { cancelCountdown() }
             }
             broadcastLobby()
+            saveHostRoom()
         } else {
             guard peer == hostPeer else { return }
             hostPeer = nil
@@ -1282,7 +2122,7 @@ final class KitchenSession: ObservableObject {
             pendingClaim = nil
             lastSentServeReady = false
             lastSentServeHold = false
-            if phase == .playing || phase == .briefing {
+            if isMidMatch {
                 // Grey ourselves out too. Without this the reconnecting player
                 // sees a frozen kitchen and no explanation for it.
                 //
@@ -1292,7 +2132,27 @@ final class KitchenSession: ObservableObject {
                 if let index = players.firstIndex(where: { $0.id == localPlayerID }) {
                     players[index].isConnected = false
                 }
-                scheduleRejoin()
+                // And grey out the host, which is who we actually lost. The
+                // overlay names the chefs we're waiting on, and "waiting for
+                // nobody in particular" is not a useful thing to tell someone
+                // staring at a still frame.
+                if let index = players.firstIndex(where: \.isHost) {
+                    players[index].isConnected = false
+                }
+                // THE FIX. The kitchen stops instead of ending. Everything is
+                // held exactly where it was — clock, bowls, half-finished
+                // minigames — and we wait for the host rather than dumping
+                // three people out of a game they were winning.
+                //
+                // Both halves are gated on the match still being live. The
+                // phase never leaves `.playing` when the clock runs out, so
+                // without this the host tapping "Back to the menu" from the
+                // results screen would put every guest on an unbounded
+                // two-second browse-and-connect loop over a finished game.
+                if !snapshot.isOver {
+                    freezeForHost()
+                    scheduleRejoin()
+                }
             } else if !phase.isRejected {
                 // A rejection already closed the socket on purpose — don't
                 // overwrite the reason with a generic "host left".
@@ -1301,19 +2161,133 @@ final class KitchenSession: ObservableObject {
         }
     }
 
-    /// Guest-side auto-rejoin: same kitchen, same code, retried every two
-    /// seconds. The host matches us by persistent player ID, so we land back
-    /// in our original slot with our original colour.
+    // MARK: Guest — waiting for the host
+
+    /// Lift the freeze completely.
+    ///
+    /// Both halves, always, together. `isFrozen` is `isPaused ||
+    /// resumeSecondsLeft != nil`, and clearing only the first leaves the views
+    /// still frozen — showing the resume card, which has no button on it,
+    /// behind a scrim that eats every tap. That is a force-quit, and it is
+    /// reachable: the grace deadline deliberately keeps running through the
+    /// 3-2-1 so a host that dies silently mid-countdown can't strand anyone.
+    private func unfreeze() {
+        isPaused = false
+        resumeSecondsLeft = nil
+    }
+
+    private func freezeForHost() {
+        // Same reason as the host's guard in `pauseMatch`: the host tapping
+        // "Back to the menu" from the results screen drops our socket, and
+        // freezing then would bury our own score under a pause card for ninety
+        // seconds. The match is over — there is nothing left to hold still.
+        guard !snapshot.isOver else { return }
+        isPaused = true
+        resumeSecondsLeft = nil
+        // Re-stamp the ticket home. `savedAt` is what `RoomResumeStore.window`
+        // measures, and for a full-length match the record written at join time
+        // would have expired by the time it was needed — which is exactly now.
+        saveGuestRoom()
+        // Re-arm rather than early-return when already frozen. A guest who
+        // reconnects into a still-paused kitchen has just had its deadline
+        // cancelled by `joinAccepted`; without this it would wait behind an
+        // overlay with no bar and no number, indefinitely.
+        if pauseDeadline == nil { beginPauseDeadline() }
+    }
+
+    /// Ninety seconds of patience, counted out loud so the wait has a shape.
+    ///
+    /// Both sides run it, for the same reason and on the same clock: an
+    /// unbounded freeze would be worse than the bug it replaces — at least a
+    /// closed kitchen tells you to go and do something else. What differs is
+    /// only what happens at zero.
+    private func beginPauseDeadline() {
+        pauseDeadline?.cancel()
+        pauseSecondsLeft = PauseRules.graceSeconds
+        pauseDeadline = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard let self, !Task.isCancelled, let left = self.pauseSecondsLeft else { return }
+                guard left > 1 else {
+                    self.pauseSecondsLeft = nil
+                    self.pauseDeadline = nil
+                    self.patienceRanOut()
+                    return
+                }
+                self.pauseSecondsLeft = left - 1
+            }
+        }
+    }
+
+    private func cancelPauseDeadline() {
+        pauseDeadline?.cancel()
+        pauseDeadline = nil
+        pauseSecondsLeft = nil
+    }
+
+    private func patienceRanOut() {
+        guard isPaused else { return }
+        if isHost {
+            // Carry on with whoever made it back. The missing chef's slot is
+            // still held, so this is a "start without them", not a kick — they
+            // can still walk in later and pick up their own colour.
+            if connectedCount >= 2 { resumeMatch() } else { closeKitchen() }
+        } else {
+            giveUpOnHost()
+        }
+    }
+
+    /// The host never came back. Close the kitchen for real.
+    private func giveUpOnHost() {
+        rejoinTask?.cancel()
+        rejoinTask = nil
+        cancelPauseDeadline()
+        unfreeze()
+        // The room is gone, so the ticket back into it is worthless. Leaving it
+        // on disk would have the start screen offering to rejoin a kitchen that
+        // stopped existing a minute and a half ago.
+        RoomResumeStore.clearGuest()
+        transport.stop()
+        phase = .hostLeft
+    }
+
+    /// Guest-side auto-rejoin, retried every two seconds until the host turns
+    /// up or the patience runs out.
+    ///
+    /// The original version connected to `joiningKitchenID` — a Bonjour
+    /// endpoint string — and that is precisely why a host who relaunched could
+    /// never be rejoined: the endpoint is minted with the process, so the id we
+    /// were holding pointed at a socket that no longer existed. We now try the
+    /// old endpoint first (instant, for a host that only blipped) and fall back
+    /// to matching the kitchen's name, with `roomID` in the handshake to make
+    /// sure the name led us somewhere real.
     private func scheduleRejoin() {
         rejoinTask?.cancel()
         rejoinTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
                 guard let self, self.hostPeer == nil else { return }
-                guard let id = self.joiningKitchenID else { return }
                 self.transport.startBrowsing()
-                self.transport.connect(toKitchen: id)
+                self.attemptRejoin()
+                try? await Task.sleep(for: .seconds(2))
             }
         }
+    }
+
+    private func attemptRejoin() {
+        guard !isHost, hostPeer == nil else { return }
+
+        // A host that merely blipped is still advertising on the endpoint we
+        // already know, and reconnecting there needs no search at all.
+        if let id = joiningKitchenID, discovered.contains(where: { $0.id == id }) {
+            transport.connect(toKitchen: id)
+            return
+        }
+        // Otherwise the host's app restarted. Find the kitchen by name; the
+        // room id we send in `hello` is what stops us walking into a different
+        // kitchen that happens to be called the same thing.
+        guard let name = targetKitchenName,
+              let match = discovered.first(where: { $0.name == name }) else { return }
+        joiningKitchenID = match.id
+        transport.connect(toKitchen: match.id)
     }
 }

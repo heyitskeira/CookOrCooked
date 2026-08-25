@@ -89,12 +89,13 @@ enum UtensilID: String, CaseIterable {
 // MARK: - Station types
 
 enum StationType: String, CaseIterable {
-    case cuttingBoard, bowl, stove, oven, table, garbage
+    case cuttingBoard, bowl, mixing, stove, oven, table, garbage
 
     var displayName: String {
         switch self {
         case .cuttingBoard: return "Cutting board"
         case .bowl:         return "Bowl"
+        case .mixing:       return "Mixing"
         case .stove:        return "Stove"
         case .oven:         return "Oven"
         case .table:        return "Table"
@@ -102,6 +103,24 @@ enum StationType: String, CaseIterable {
         }
     }
 
+    /// The counter on the kitchen map this rules-engine station stands for.
+    ///
+    /// The two models were drawn up separately and only ever joined by
+    /// `gatingID`, which proves an action exists without saying where. That is
+    /// how the dough came to sit on `.bowl` here while `Recipe.actions` ran it
+    /// at `.mixing`. `RecipeBook.recipesAtWrongStation` walks this mapping so
+    /// the two can't drift apart again unnoticed.
+    var kitchenStation: StationID {
+        switch self {
+        case .cuttingBoard: return .chopping
+        case .bowl:         return .bowl1     // bowl2 is interchangeable
+        case .mixing:       return .mixing
+        case .stove:        return .stove
+        case .oven:         return .ovenServe
+        case .table:        return .table
+        case .garbage:      return .trash
+        }
+    }
 }
 
 // MARK: - Recipes (the 12 actions, as data)
@@ -152,8 +171,12 @@ enum Recipes {
                      input: .exact([.egg]), utensil: .whisk,
                      requiresHotOven: false, effect: .produce(.crackedEgg)),
 
-        GatingRecipe(id: "dough", name: "Make dough", station: .bowl,
-                     input: .exact([.siftedFlour, .meltedButter, .crackedEgg, .sugar, .cream]), utensil: .mixer,
+        // Dough is made at the Mixing station, not a bowl, and cream is not one
+        // of its inputs — the cream is whipped separately and meets the base at
+        // assembly. Both were wrong here while `Recipe.actions` and the recipe
+        // book had it right.
+        GatingRecipe(id: "dough", name: "Make dough", station: .mixing,
+                     input: .exact([.siftedFlour, .meltedButter, .crackedEgg, .sugar]), utensil: .mixer,
                      requiresHotOven: false, effect: .produce(.rawDough)),
 
         GatingRecipe(id: "whip", name: "Whip cream", station: .bowl,

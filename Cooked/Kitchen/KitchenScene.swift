@@ -755,73 +755,8 @@ final class KitchenScene: SKScene {
             onOpenDrawer?()
             return
         }
-        
-//        if station == .bowl1{
-//            ChooseAction()
-//        }
-//        
-//        if station == .bowl2 {
-//            ChooseAction()
-//        }
-        
-        switch evaluateStation(station) {
-        case .blocked:
-            return
 
-        case .ready(let action):
-            // Offline: nobody to share the kitchen with.
-            guard let session else {
-                openStation(action)
-                return
-            }
-
-            // Networked: ask the host for the station and stand here until it
-            // says yes. `resolveWaiting` opens the screen when the answer
-            // arrives, which may be immediately or may be after the current
-            // occupant walks off.
-            waitingStation = station
-            lastWaitToastFor = nil
-            session.claimStation(station)
-        }
-    }
-
-    private enum StationEntry {
-        case ready(CookAction)
-        /// Nothing to open. A toast has already explained why, or the chef's
-        /// ingredient was deposited and that was the whole visit.
-        case blocked
-    }
-
-    /// Every check that must pass before a station screen opens.
-    ///
-    /// This lives in one place because there are two ways in: walking up to a
-    /// free station (`arrive`) and being handed one you queued for
-    /// (`resolveWaiting`). The queued path used to skip all of this and open
-    /// whatever was available at that instant, which dropped a waiting chef
-    /// into an action they never chose — and the action's product then
-    /// overwrote whatever they were holding.
-    private func evaluateStation(_ station: StationID) -> StationEntry {
-        guard let action = state.availableAction(at: station) else {
-            showToast(state.blockReason(at: station))
-            return .blocked
-            // The recipe itself says no — nothing to queue for.
-            guard let action = stationAction(at: station) else {
-                // Serving used to happen here, and `blockReason` still thinks it
-                // does — it would say "Not ready yet" to someone holding a
-                // finished cake. Point them at the middle of the room instead.
-                if let serve = ServeRitual.action, station == serve.station,
-                   state.isUnlocked(serve) {
-                    showToast("Take it to the middle — everyone serves together")
-                } else {
-                    showToast(state.blockReason(at: station))
-                }
-            }
-        }
-
-        // Deposit: if the chef is holding a raw ingredient this action still
-        // needs, drop it here and stop. (Host-authoritative in a networked game.)
-
-        // Serving is no longer something one chef does at the oven: the whole
+        // Serving is no longer something one chef does at a station: the whole
         // team has to gather in the middle of the room and press together (see
         // ServeRitual). Point anyone who walks up here holding the finished
         // cake at the floor, rather than opening a popup that cannot serve.
@@ -831,8 +766,9 @@ final class KitchenScene: SKScene {
             return
         }
 
-        // Every other station now shows the SwiftUI popup (drop/pick-up vs do
-        // action). The popup calls back into `beginAction` if the chef acts.
+        // Every other station shows the SwiftUI popup (drop/pick-up vs do an
+        // action). The popup reads the candidates itself and calls back into
+        // `beginAction` once the chef picks one — the scene doesn't decide here.
         onArriveStation?(station)
     }
 

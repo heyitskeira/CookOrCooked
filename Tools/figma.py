@@ -5,9 +5,15 @@ figma.py — read layout numbers and pull PNGs straight out of a Figma file.
 Works on a free Figma account: the REST API needs only a personal access token,
 not Dev Mode or a paid seat.
 
-    Tools/figma.py frames  <file-url>
-    Tools/figma.py layout  <file-url> <frame-name-or-id>
-    Tools/figma.py export  <file-url> <node-id> <asset-name>
+    Tools/figma.py frames <file-url>
+    Tools/figma.py layout <file-url> <frame-id> [<frame-id> ...]
+    Tools/figma.py export <file-url> <node-id>=<asset-name> [...]
+
+Add --refresh to ignore the cache after the design has actually changed.
+
+Batch aggressively: several frames in one `layout`, several drawings in one
+`export`. Figma rate-limits reads hard, and one request for six screens is the
+difference between reading a whole flow and being cut off half way.
 
 The token is read from ~/.config/figma/token, or $FIGMA_TOKEN. It is never
 printed, never passed on a command line, and never written into the repo.
@@ -35,7 +41,10 @@ API = "https://api.figma.com/v1"
 # trip it. Responses are cached on disk so re-reading a frame — which happens
 # constantly while nudging a layout — costs nothing.
 CACHE = pathlib.Path(os.environ.get("TMPDIR", "/tmp")) / "figma-cache"
-CACHE_SECONDS = 30 * 60
+# No expiry: a design file only changes when somebody edits it, and `--refresh`
+# is how you say that happened. Re-reading a frame you already pulled is the
+# single easiest way to burn the rate limit for nothing.
+REFRESH = False
 DROP = pathlib.Path(__file__).resolve().parent.parent / "Assets-agung" / "drop"
 
 
@@ -62,7 +71,7 @@ def get(path: str, use_cache: bool = True) -> dict:
     # Keyed on the path only — the token never reaches the cache key or the
     # filename, so nothing secret lands on disk here.
     slot = CACHE / (hashlib.sha256(path.encode()).hexdigest()[:32] + ".json")
-    if use_cache and slot.exists() and time.time() - slot.stat().st_mtime < CACHE_SECONDS:
+    if use_cache and not REFRESH and slot.exists():
         return json.loads(slot.read_text())
 
     request = urllib.request.Request(f"{API}{path}", headers={"X-Figma-Token": token()})
@@ -70,7 +79,11 @@ def get(path: str, use_cache: bool = True) -> dict:
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
                 payload = json.load(response)
-            slot.write_text(json.dumps(payload))
+            # Only cache what is safe to replay. Render responses hand back
+            # short-lived S3 links, so storing them would mean serving dead
+            # URLs back later.
+            if use_cache:
+                slot.write_text(json.dumps(payload))
             return payload
         except urllib.error.HTTPError as error:
             if error.code == 429 and attempt < 3:
@@ -119,30 +132,52 @@ def cmd_frames(url: str):
             print(f"  {frame.get('id'):<12} {size:>12}  {frame.get('name')}")
 
 
-def cmd_layout(url: str, target: str):
+def cmd_layout(url: str, *targets: str):
     """Every layer inside a frame, positioned relative to that frame.
 
     These are the numbers a SwiftUI layout wants: divide by the frame's width
     and height and you have the fractions the screens are written in.
     """
     key = file_key(url)
+    if not targets:
+        sys.exit("Give at least one frame id or name.")
 
-    if ":" in target:
-        # An id can be fetched on its own, which avoids pulling a file that may
-        # be hundreds of frames wide just to read one screen.
-        node_id = urllib.parse.quote(target)
-        nodes = get(f"/files/{key}/nodes?ids={node_id}").get("nodes", {})
-        entry = nodes.get(target) or (list(nodes.values())[0] if nodes else None)
-        frame = entry.get("document") if entry else None
-    else:
+    frames = []
+    ids = [t for t in targets if ":" in t]
+    names = [t for t in targets if ":" not in t]
+
+    if ids:
+        # The nodes endpoint takes a whole list, so six screens cost one request
+        # rather than six. This is the difference between reading a flow in one
+        # go and being rate limited half way through it.
+        joined = urllib.parse.quote(",".join(ids))
+        nodes = get(f"/files/{key}/nodes?ids={joined}").get("nodes", {})
+        for node_id in ids:
+            entry = nodes.get(node_id)
+            if entry and entry.get("document"):
+                frames.append(entry["document"])
+            else:
+                print(f"! no node {node_id}", file=sys.stderr)
+
+    if names:
         document = get(f"/files/{key}")["document"]
-        frame = next(
-            (n for n, _ in walk(document) if n.get("name") == target), None
-        )
+        by_name = {n.get("name"): n for n, _ in walk(document)}
+        for name in names:
+            if name in by_name:
+                frames.append(by_name[name])
+            else:
+                print(f"! no layer named {name!r}", file=sys.stderr)
 
-    if frame is None:
-        sys.exit(f"No layer named or with id {target!r}. Try: frames")
+    if not frames:
+        sys.exit("Nothing matched. Try: frames")
 
+    for index, frame in enumerate(frames):
+        if index:
+            print("\n" + "=" * 78 + "\n")
+        dump_frame(frame)
+
+
+def dump_frame(frame):
     origin = box(frame)
     fw, fh = origin.get("width", 0), origin.get("height", 0)
     print(f"frame {frame.get('name')!r}  {fw:.0f} x {fh:.0f}\n")
@@ -180,40 +215,57 @@ def cmd_layout(url: str, target: str):
                 print(f"{'':<12} {'':>31}   stroke #{hexcode} w{node.get('strokeWeight')}")
 
 
-def cmd_export(url: str, node_id: str, asset: str):
-    """Render one node at 2x and 3x straight into the drop folder.
+def cmd_export(url: str, *pairs: str):
+    """Render nodes at 2x and 3x straight into the drop folder.
 
-    Saves them under the name the importer expects, so the whole run is:
-    export, then Tools/import-art.sh.
+        figma.py export <url> 838:555=ui-waiting-rock 586:5758=ui-chef-1 ...
+
+    Every node in one request per scale, so twenty drawings cost two calls
+    rather than forty. Then: Tools/import-art.sh
     """
     key = file_key(url)
     DROP.mkdir(parents=True, exist_ok=True)
 
+    wanted = {}
+    for pair in pairs:
+        if "=" not in pair:
+            sys.exit(f"Expected <node-id>=<asset-name>, got {pair!r}")
+        node_id, asset = pair.split("=", 1)
+        wanted[node_id.strip()] = asset.strip()
+    if not wanted:
+        sys.exit("Give at least one <node-id>=<asset-name> pair.")
+
     for scale in (2, 3):
         query = urllib.parse.urlencode(
-            {"ids": node_id, "format": "png", "scale": scale}
+            {"ids": ",".join(wanted), "format": "png", "scale": scale}
         )
         result = get(f"/images/{key}?{query}", use_cache=False)
         if result.get("err"):
-            sys.exit(f"Figma could not render {node_id}: {result['err']}")
-        link = (result.get("images") or {}).get(node_id)
-        if not link:
-            sys.exit(f"Figma returned no image for {node_id}")
+            sys.exit(f"Figma could not render: {result['err']}")
 
-        # The rendered PNG lives on a pre-signed S3 URL — no token on this one.
-        with urllib.request.urlopen(link, timeout=120) as response:
-            data = response.read()
-        out = DROP / f"{asset}@{scale}x.png"
-        out.write_bytes(data)
-        print(f"  {out.relative_to(DROP.parent.parent)}  ({len(data) // 1024} KB)")
+        images = result.get("images") or {}
+        for node_id, asset in wanted.items():
+            link = images.get(node_id)
+            if not link:
+                print(f"  ! no image for {node_id} ({asset})", file=sys.stderr)
+                continue
+            # The PNG lives on a pre-signed S3 URL — no token on this one.
+            with urllib.request.urlopen(link, timeout=120) as response:
+                data = response.read()
+            out = DROP / f"{asset}@{scale}x.png"
+            out.write_bytes(data)
+            print(f"  {out.name}  ({len(data) // 1024} KB)")
 
     print("\nNow run: Tools/import-art.sh")
 
 
 def main():
-    if len(sys.argv) < 2:
+    global REFRESH
+    argv = [a for a in sys.argv[1:] if a != "--refresh"]
+    REFRESH = "--refresh" in sys.argv
+    if not argv:
         sys.exit(__doc__)
-    command, args = sys.argv[1], sys.argv[2:]
+    command, args = argv[0], argv[1:]
     handlers = {"frames": cmd_frames, "layout": cmd_layout, "export": cmd_export}
     if command not in handlers:
         sys.exit(__doc__)

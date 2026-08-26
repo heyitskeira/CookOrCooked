@@ -30,7 +30,7 @@ struct StationPage: View {
     /// main-actor state that `View` conformance implies.
     nonisolated static func exists(for station: StationID) -> Bool {
         switch station {
-        case .chopping, .bowl1, .bowl2: return true
+        case .chopping, .bowl1, .bowl2, .ovenServe: return true
         default: return false
         }
     }
@@ -64,6 +64,12 @@ struct StationPage: View {
                                 inventory: inventory, onClose: onClose)
         case .bowl1, .bowl2:
             BowlStationView(station: station, session: session,
+                            inventory: inventory, onClose: onClose)
+        // Pre-heating and baking. Serving also nominally belongs to this
+        // counter, but it is the ritual out on the map and is filtered out of
+        // the page's action list — see `OvenStationView.action`.
+        case .ovenServe:
+            OvenStationView(station: station, session: session,
                             inventory: inventory, onClose: onClose)
         default:
             // Unreachable via `exists(for:)`, and harmless if a caller ever

@@ -112,7 +112,8 @@ struct ChoppingStationView: View {
                 boardFoodLayer(geo)
                 StationHands(inventory: inventory, geo: geo)
                 StationHeaderBar(title: action?.name ?? station.displayName,
-                                 progress: chopProgress, geo: geo)
+                                 progress: chopProgress,
+                                 badgeArt: "bucket-strawberries", geo: geo)
 
                 // Underneath the corner buttons in z-order on purpose: back
                 // and help stay reachable mid-chop (backing out, or

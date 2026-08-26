@@ -13,6 +13,15 @@
 //  doing the keyboard and the editing, with the digits drawn on top. Four
 //  separate fields would fight each other over focus for no gain.
 //
+//  The fourth digit submits on its own. A room code is a known, fixed length,
+//  so there is nothing for a JOIN tap to confirm — the code is either four
+//  digits or it isn't, and the player has already said everything they have to
+//  say. It also gets the number pad out of the way without being asked, which
+//  in landscape is sitting over the plates the digits are drawn on.
+//
+//  The signpost stays for the player who reaches for it anyway, and both routes
+//  go through `submit()` so neither can fire the join twice.
+//
 
 import SwiftUI
 
@@ -24,8 +33,20 @@ struct KitchenCodeView: View {
 
     @State private var typed = ""
     @FocusState private var focused: Bool
+    /// The join is a one-way door — it dismisses this screen and hands the code
+    /// to the session. The fourth digit and the signpost can both reach it, and
+    /// on a slow frame both could reach it for the same code.
+    @State private var hasJoined = false
 
     private var code: RoomCode? { RoomCode(typed) }
+
+    /// How long the finished code sits on screen before the join goes through.
+    ///
+    /// Not a stall: the fourth digit and the join land on the same frame
+    /// otherwise, so the plate the player just filled is never actually seen
+    /// filled. Long enough to read as "that's the code", short enough not to
+    /// read as the app thinking about it.
+    private static let settleBeat = 0.25
 
     // MARK: - Layout
     //
@@ -65,11 +86,7 @@ struct KitchenCodeView: View {
             nextAspect: 201.0 / 160.0,
             nextEnabled: code != nil,
             onBack: { dismiss() },
-            onNext: {
-                guard let code else { return }
-                focused = false
-                onJoin(code)
-            }
+            onNext: submit
         ) { w, h in
             digits(w: w, h: h)
             field(w: w, h: h)
@@ -77,6 +94,41 @@ struct KitchenCodeView: View {
         // The keyboard is the point of this screen, so it comes up on arrival
         // rather than after a tap nobody is told to make.
         .onAppear { focused = true }
+    }
+
+    // MARK: - Joining
+
+    /// The fourth digit landed. Drop the number pad straight away — in
+    /// landscape it covers the plates, and the player's first instinct on
+    /// finishing is to look at what they typed — then join once they have had a
+    /// moment to see it.
+    private func codeIsComplete() {
+        guard !hasJoined else { return }
+        focused = false
+
+        let entered = typed
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.settleBeat) {
+            // The pad takes about this long to animate away, and keys pressed
+            // while it is still on screen still land — so a player who spots a
+            // wrong digit can just about get a backspace in. Their correction
+            // wins, and the pad comes back, because it is already leaving and
+            // they have no other way to type.
+            guard typed == entered else {
+                focused = true
+                return
+            }
+            submit()
+        }
+    }
+
+    /// The one way out of this screen with a code. Both the fourth digit and
+    /// the signpost come through here, so a player who taps JOIN while the beat
+    /// is still running cannot join the same kitchen twice.
+    private func submit() {
+        guard !hasJoined, let code else { return }
+        hasJoined = true
+        focused = false
+        onJoin(code)
     }
 
     // MARK: - Pieces
@@ -94,7 +146,14 @@ struct KitchenCodeView: View {
             .opacity(0.01)
             .onChange(of: typed) { _, new in
                 let cleaned = String(new.filter(\.isNumber).prefix(Self.length))
-                if cleaned != new { typed = cleaned }
+                // Writing the cleaned value back re-enters this closure with
+                // it, so the completeness check below belongs to that pass —
+                // doing it here as well would run it twice on every paste.
+                if cleaned != new {
+                    typed = cleaned
+                    return
+                }
+                if cleaned.count == Self.length { codeIsComplete() }
             }
             .position(x: w * Layout.rowCentre.x, y: h * Layout.rowCentre.y)
     }

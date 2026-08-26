@@ -32,16 +32,13 @@ enum RockLayout {
     /// forest out instead of darkening it.
     static let backdropDim = 0.35
 
-    // Rock, anchored top-left. The Figma frame's own origin puts the top of the
-    // drawing above the screen edge, because that frame is sized around the ivy
-    // overhang rather than the rock — so the placement is matched to the comp
-    // instead, which keeps the whole rock on screen with the design's margin.
-    static let rockLeft = 0.170
-    static let rockTop = 0.090
-    static let rockWidth = 0.660
+    // Rock, anchored top-left, straight off the Figma frame: x 100, w 684.7.
+    // Its vertical origin differs per screen — the chef-name rock is pushed up
+    // so the vine overhang runs off the top — so `rockTop` is passed in.
+    static let rockLeft = 100.0 / 874
+    static let rockWidth = 684.7 / 874
     static let rockAspect = 1125.0 / 2055
 
-    static let titleTop = 129.0 / 402
     static let titleSize = 45.31 / 874
     static let titleTracking = 2.27 / 874
 
@@ -55,8 +52,7 @@ enum RockLayout {
     /// thickness that would go fat on a small phone.
     static let strokeRatio = 1.0 / 45.31
 
-    static let subtitleTop = 245.0 / 402
-    static let subtitleSize = 15.0 / 874
+    static let subtitleSize = 16.0 / 874
 
     // NEXT signpost — Figma X 703, Y 308, W/H swapped for the 90° rotation, so
     // 160 wide. It runs off the bottom of the frame in the design; the post is
@@ -66,7 +62,11 @@ enum RockLayout {
     static let nextWidth = 160.0 / 874
     static let nextAspect = 282.0 / 480
 
-    static let backHeight = 0.20
+    // Back signpost — Figma x 49, and 134 tall from y -56, of which the 78pt
+    // below the screen edge is what the export contains. So the drawing starts
+    // at y 0 and the post it hangs from is simply off-screen above.
+    static let backLeft = 49.0 / 874
+    static let backHeight = 78.0 / 402
 }
 
 // MARK: - The screen
@@ -76,9 +76,17 @@ struct ForestRockScreen<Content: View>: View {
     let title: String
     let subtitle: String
 
-    /// Where the helper line sits. Defaults to the name screen's position;
-    /// screens with a taller middle push it further down.
-    var subtitleTop: CGFloat = RockLayout.subtitleTop
+    /// Where the rock's top edge sits. Negative pushes it off the top of the
+    /// screen, which is what the chef-name screen does.
+    var rockTop: CGFloat = 0
+
+    /// Top of the title's text box, and of the helper line. Both differ per
+    /// screen in the design, so neither can be a shared constant.
+    var titleTop: CGFloat
+    var subtitleTop: CGFloat
+
+    /// The helper line's colour. The two screens letter it differently.
+    var subtitleColor: Color = AppTheme.stone
 
     /// NEXT dims and stops responding when this is false.
     var nextEnabled: Bool = true
@@ -126,7 +134,7 @@ struct ForestRockScreen<Content: View>: View {
         RockArt.image("ui-name-rock",
                       width: w * RockLayout.rockWidth,
                       aspect: RockLayout.rockAspect)
-            .offset(x: w * RockLayout.rockLeft, y: h * RockLayout.rockTop)
+            .offset(x: w * RockLayout.rockLeft, y: h * rockTop)
     }
 
     private func titleText(w: CGFloat, h: CGFloat) -> some View {
@@ -141,13 +149,13 @@ struct ForestRockScreen<Content: View>: View {
             bend: RockLayout.titleBend,
             tracking: w * RockLayout.titleTracking
         )
-        .position(x: w * 0.5, y: h * RockLayout.titleTop + size * 0.5)
+        .position(x: w * 0.5, y: h * titleTop + size * 0.5)
     }
 
     private func subtitleText(w: CGFloat, h: CGFloat) -> some View {
         Text(subtitle)
-            .font(.system(size: w * RockLayout.subtitleSize, weight: .semibold, design: .rounded))
-            .foregroundStyle(AppTheme.stone.opacity(0.85))
+            .font(.system(size: w * RockLayout.subtitleSize, weight: .medium).width(.condensed))
+            .foregroundStyle(subtitleColor)
             .frame(width: w)
             .position(x: w * 0.5, y: h * subtitleTop + w * RockLayout.subtitleSize * 0.5)
     }
@@ -178,9 +186,9 @@ struct ForestRockScreen<Content: View>: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Back")
-        // No top padding: the signpost is drawn hanging from the top edge, so
-        // its post is meant to run off the top of the screen.
-        .padding(.leading, w * 0.03)
+        // No vertical offset: the drawing already starts at the screen edge,
+        // with the rest of its post above and out of frame.
+        .offset(x: w * RockLayout.backLeft)
     }
 }
 

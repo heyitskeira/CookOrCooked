@@ -45,6 +45,14 @@ enum AppTheme {
     static let bark = Color(hex: 0x645144)
     static let barkDeep = Color(hex: 0x493A2F)
 
+    /// The warm off-white the rock's panels are filled with — the name field,
+    /// the character counter, the chosen player-count tile.
+    static let paper = Color(hex: 0xFFEBD8)
+
+    /// A shade lighter than `paper`, and what the lettering on the *dark*
+    /// panels is set in: the unchosen tiles, the signposts.
+    static let parchment = Color(hex: 0xFFEFDF)
+
     // Warm kitchen backdrop used across screens
     static var background: some View {
         LinearGradient(

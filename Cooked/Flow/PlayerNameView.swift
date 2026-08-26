@@ -45,13 +45,25 @@ struct PlayerNameView: View {
 
     // MARK: - Layout
 
+    // Straight off the Figma frame (874 x 402), which reports each layer's
+    // rendered box — no converting for rotation needed.
     private enum Layout {
-        static let fieldCentre = CGPoint(x: 0.4875, y: 0.5125)
-        static let fieldSize = CGSize(width: 0.335, height: 0.145)
-        static let fieldTextSize = 30.0 / 874
-        static let badgeCentre = CGPoint(x: 0.681, y: 0.5125)
-        static let badgeDiameter = 0.043
-        static let badgeTextSize = 13.0 / 874
+        static let rockTop = -29.0 / 402
+        static let titleTop = 110.0 / 402
+        static let subtitleTop = 229.0 / 402
+
+        // Rectangle 49: x 258.4, y 157.3, 296.8 x 60.8, 3pt stroke.
+        static let fieldCentre = CGPoint(x: (258.4 + 296.8 / 2) / 874,
+                                         y: (157.3 + 60.8 / 2) / 402)
+        static let fieldSize = CGSize(width: 296.8 / 874, height: 60.8 / 402)
+        static let fieldStrokeWidth = 2.99 / 402
+        static let fieldTextSize = 43.82 / 874
+
+        // Rectangle 50: x 567.1, y 165.3, 45.8 square, same 3pt stroke.
+        static let badgeCentre = CGPoint(x: (567.1 + 45.8 / 2) / 874,
+                                         y: (165.3 + 45.8 / 2) / 402)
+        static let badgeDiameter = 45.8 / 874
+        static let badgeTextSize = 13.94 / 874
     }
 
     // MARK: - Body
@@ -60,6 +72,10 @@ struct PlayerNameView: View {
         ForestRockScreen(
             title: "PLAYER NAME",
             subtitle: "This will be shown to other chefs!",
+            rockTop: Layout.rockTop,
+            titleTop: Layout.titleTop,
+            subtitleTop: Layout.subtitleTop,
+            subtitleColor: AppTheme.barkDeep,
             nextEnabled: canContinue,
             onBack: { dismiss() },
             onNext: {
@@ -128,8 +144,8 @@ struct PlayerNameView: View {
                 // deadens the whole field, keyboard and all.
                 .allowsHitTesting(false)
             }
-            .background(Capsule().fill(.white))
-            .overlay(Capsule().stroke(AppTheme.stone.opacity(0.55), lineWidth: fieldH * 0.055))
+            .background(Capsule().fill(AppTheme.paper))
+            .overlay(Capsule().stroke(AppTheme.barkDeep, lineWidth: h * Layout.fieldStrokeWidth))
             .position(x: w * Layout.fieldCentre.x, y: h * Layout.fieldCentre.y)
     }
 
@@ -137,11 +153,11 @@ struct PlayerNameView: View {
         let size = w * Layout.badgeDiameter
 
         return Text("\(chefName.count)/\(Self.maxLength)")
-            .font(.system(size: w * Layout.badgeTextSize, weight: .bold, design: .rounded))
-            .foregroundStyle(AppTheme.bark)
+            .font(.system(size: w * Layout.badgeTextSize, weight: .medium).width(.condensed))
+            .foregroundStyle(AppTheme.barkDeep)
             .frame(width: size, height: size)
-            .background(Circle().fill(.white))
-            .overlay(Circle().stroke(AppTheme.stone.opacity(0.55), lineWidth: size * 0.05))
+            .background(Circle().fill(AppTheme.paper))
+            .overlay(Circle().stroke(AppTheme.barkDeep, lineWidth: h * Layout.fieldStrokeWidth))
             .position(x: w * Layout.badgeCentre.x, y: h * Layout.badgeCentre.y)
     }
 }

@@ -33,18 +33,21 @@ struct NumberOfPlayersView: View {
 
     // MARK: - Layout
 
+    // Straight off the Figma frame (874 x 402). The three tiles sit at x 277,
+    // 387 and 496.8, each 96.2 x 95, so the gap between them is 13.7.
     private enum Layout {
-        /// The tiles export at 100 x 98pt, so they are placed at their drawn
-        /// size rather than stretched to a guess.
-        static let tileWidth = 100.0 / 874
-        static let tileAspect = 294.0 / 299
-        static let tileGap = 11.0 / 874
-        static let rowCentre = CGPoint(x: 0.492, y: 0.520)
-        static let numberSize = 38.0 / 874
+        static let titleTop = 127.0 / 402
+        static let subtitleTop = 276.0 / 402
 
-        /// Lower than the name screen's, because the tiles are taller than the
-        /// name field and would otherwise crowd the line.
-        static let subtitleTop = 0.685
+        static let tileWidth = 96.2 / 874
+        static let tileAspect = 95.0 / 96.2
+        static let tileGap = 13.7 / 874
+        static let rowCentre = CGPoint(x: (277.0 + 316.0 / 2) / 874,
+                                       y: (167.0 + 95.0 / 2) / 402)
+
+        /// The counts are lettered far larger than anything else on the rock.
+        static let numberSize = 78.96 / 874
+        static let numberStroke = 1.72 / 78.96
     }
 
     // MARK: - Body
@@ -53,6 +56,7 @@ struct NumberOfPlayersView: View {
         ForestRockScreen(
             title: "NO. OF PLAYERS",
             subtitle: "How many people will be playing the game?",
+            titleTop: Layout.titleTop,
             subtitleTop: Layout.subtitleTop,
             nextEnabled: selected != nil,
             onBack: { dismiss() },
@@ -92,11 +96,11 @@ struct NumberOfPlayersView: View {
                     // that reads on it; the others invert that.
                     ArcText("\(count)",
                             font: numberFont,
-                            fill: isSelected ? AppTheme.bark : AppTheme.sand,
+                            fill: isSelected ? AppTheme.bark : AppTheme.parchment,
                             stroke: AppTheme.barkDeep,
-                            strokeWidth: numberSize * RockLayout.strokeRatio,
+                            strokeWidth: numberSize * Layout.numberStroke,
                             bend: .zero,
-                            shadowOpacity: 0.25)
+                            shadowOpacity: 0)
                         .allowsHitTesting(false)
                 }
         }

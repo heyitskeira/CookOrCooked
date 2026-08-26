@@ -79,6 +79,13 @@ struct ForestRockScreen<Content: View>: View {
     /// list — the rows are their own explanation.
     var subtitle: String = ""
 
+    /// The rock itself. The setup screens share one slab; the waiting room is
+    /// drawn on a wider one with vines down both sides.
+    var rockAsset: String = "ui-name-rock"
+    var rockLeft: CGFloat = RockLayout.rockLeft
+    var rockWidth: CGFloat = RockLayout.rockWidth
+    var rockAspect: CGFloat = RockLayout.rockAspect
+
     /// Where the rock's top edge sits. Negative pushes it off the top of the
     /// screen, which is what the chef-name screen does.
     var rockTop: CGFloat = 0
@@ -97,8 +104,11 @@ struct ForestRockScreen<Content: View>: View {
     var nextLabel: String = "Next"
     var nextAspect: CGFloat = RockLayout.nextAspect
 
-    /// The sign dims and stops responding when this is false.
+    /// The sign dims and stops responding when this is false, and is not drawn
+    /// at all when `showNext` is false — a guest in the lobby has nothing to
+    /// press, the host starts the game.
     var nextEnabled: Bool = true
+    var showNext: Bool = true
 
     var onBack: () -> Void
     var onNext: () -> Void
@@ -131,7 +141,9 @@ struct ForestRockScreen<Content: View>: View {
                 if !subtitle.isEmpty {
                     subtitleText(w: w, h: h)
                 }
-                nextButton(w: w, h: h)
+                if showNext {
+                    nextButton(w: w, h: h)
+                }
                 backButton(w: w, h: h)
             }
             .frame(width: w, height: h)
@@ -142,10 +154,8 @@ struct ForestRockScreen<Content: View>: View {
     // MARK: - Pieces
 
     private func rockArt(w: CGFloat, h: CGFloat) -> some View {
-        RockArt.image("ui-name-rock",
-                      width: w * RockLayout.rockWidth,
-                      aspect: RockLayout.rockAspect)
-            .offset(x: w * RockLayout.rockLeft, y: h * rockTop)
+        RockArt.image(rockAsset, width: w * rockWidth, aspect: rockAspect)
+            .offset(x: w * rockLeft, y: h * rockTop)
     }
 
     private func titleText(w: CGFloat, h: CGFloat) -> some View {

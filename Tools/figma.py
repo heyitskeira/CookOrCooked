@@ -19,15 +19,23 @@ which is why a 90°-rotated signpost reads "W 201, H 160" but draws 160 wide.
 Nothing here needs that conversion.
 """
 
+import hashlib
 import json
 import os
 import pathlib
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
 API = "https://api.figma.com/v1"
+
+# Figma rate-limits reads hard enough that walking a few screens in a row will
+# trip it. Responses are cached on disk so re-reading a frame — which happens
+# constantly while nudging a layout — costs nothing.
+CACHE = pathlib.Path(os.environ.get("TMPDIR", "/tmp")) / "figma-cache"
+CACHE_SECONDS = 30 * 60
 DROP = pathlib.Path(__file__).resolve().parent.parent / "Assets-agung" / "drop"
 
 
@@ -49,15 +57,31 @@ def token() -> str:
     )
 
 
-def get(path: str) -> dict:
+def get(path: str, use_cache: bool = True) -> dict:
+    CACHE.mkdir(parents=True, exist_ok=True)
+    # Keyed on the path only — the token never reaches the cache key or the
+    # filename, so nothing secret lands on disk here.
+    slot = CACHE / (hashlib.sha256(path.encode()).hexdigest()[:32] + ".json")
+    if use_cache and slot.exists() and time.time() - slot.stat().st_mtime < CACHE_SECONDS:
+        return json.loads(slot.read_text())
+
     request = urllib.request.Request(f"{API}{path}", headers={"X-Figma-Token": token()})
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            return json.load(response)
-    except urllib.error.HTTPError as error:
-        # Deliberately not echoing the request headers — the token is in them.
-        body = error.read().decode("utf-8", "replace")[:400]
-        sys.exit(f"Figma API {error.code} on {path}\n{body}")
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                payload = json.load(response)
+            slot.write_text(json.dumps(payload))
+            return payload
+        except urllib.error.HTTPError as error:
+            if error.code == 429 and attempt < 3:
+                wait = 20 * (attempt + 1)
+                print(f"  rate limited, waiting {wait}s…", file=sys.stderr)
+                time.sleep(wait)
+                continue
+            # Deliberately not echoing the request headers — the token is there.
+            body = error.read().decode("utf-8", "replace")[:400]
+            sys.exit(f"Figma API {error.code} on {path}\n{body}")
+    sys.exit(f"Figma API kept rate limiting {path}")
 
 
 def file_key(url: str) -> str:
@@ -169,7 +193,7 @@ def cmd_export(url: str, node_id: str, asset: str):
         query = urllib.parse.urlencode(
             {"ids": node_id, "format": "png", "scale": scale}
         )
-        result = get(f"/images/{key}?{query}")
+        result = get(f"/images/{key}?{query}", use_cache=False)
         if result.get("err"):
             sys.exit(f"Figma could not render {node_id}: {result['err']}")
         link = (result.get("images") or {}).get(node_id)

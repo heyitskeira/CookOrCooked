@@ -38,11 +38,12 @@ struct WaitingRoomView: View {
     var body: some View {
         ForestRockScreen(
             title: KitchenTitle.banner(session.kitchenName),
-            rockAsset: "ui-waiting-rock",
-            rockLeft: Layout.rockLeft,
-            rockWidth: Layout.rockWidth,
-            rockAspect: Layout.rockAspect,
-            rockTop: Layout.rockTop,
+            rockAsset: WaitingRoomLayout.fallbackRockAsset,
+            rockLeft: Layout.fallbackRockLeft,
+            rockWidth: Layout.fallbackRockWidth,
+            rockAspect: Layout.fallbackRockAspect,
+            rockLayers: Layout.rockPieces,
+            rockTop: Layout.fallbackRockTop,
             titleTop: Layout.titleTop,
             // No signpost here. Every chef presses Ready — the host does not
             // start the room — and there is no READY sign drawn in the design,

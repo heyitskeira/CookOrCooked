@@ -56,7 +56,34 @@ enum WaitingRoomLayout {
         static let leafWidth = 46.0 / 874
         static let leafCentre = CGPoint(x: 18.6 / 92, y: 99.8 / 116)
 
-        static let countLeft = 661.0 / 874
+        /// The lobby's rock, as its separate drawings. Exporting the Figma group
+    /// that holds them would bake in the mock title and chef cards that live in
+    /// the same group — which is exactly what went wrong the first time.
+    static let rockPieces: [RockLayer] = [
+        RockLayer(asset: "ui-rock-slab",
+                  left: 71.0 / 874, top: -2.0 / 402,
+                  width: 736.0 / 874, aspect: 411.0 / 736),
+        RockLayer(asset: "ui-rock-vine-mid",
+                  left: 331.0 / 874, top: 64.0 / 402,
+                  width: 216.0 / 874, aspect: 337.0 / 216),
+        RockLayer(asset: "ui-rock-vine-left",
+                  left: -9.0 / 874, top: -15.0 / 402,
+                  width: 377.0 / 874, aspect: 315.2 / 377),
+        RockLayer(asset: "ui-rock-vine-right",
+                  left: 513.0 / 874, top: -15.0 / 402,
+                  width: 377.0 / 874, aspect: 315.2 / 377)
+    ]
+
+    /// Stands in until those four pieces exist. The setup screens' slab is a
+    /// clean drawing — no title, no chefs — placed on the design's own slab box
+    /// so the cards and lettering above it land in the right place either way.
+    static let fallbackRockAsset = "ui-name-rock"
+    static let fallbackRockLeft = 71.0 / 874
+    static let fallbackRockTop = -2.0 / 402
+    static let fallbackRockWidth = 736.0 / 874
+    static let fallbackRockAspect = 411.0 / 736
+
+    static let countLeft = 661.0 / 874
         static let countTop = 360.0 / 402
         static let countSize = 16.0 / 874
     }

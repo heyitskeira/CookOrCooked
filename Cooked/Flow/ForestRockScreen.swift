@@ -74,7 +74,10 @@ enum RockLayout {
 struct ForestRockScreen<Content: View>: View {
 
     let title: String
-    let subtitle: String
+
+    /// Empty on screens the design gives no helper line, such as the kitchen
+    /// list — the rows are their own explanation.
+    var subtitle: String = ""
 
     /// Where the rock's top edge sits. Negative pushes it off the top of the
     /// screen, which is what the chef-name screen does.
@@ -83,12 +86,18 @@ struct ForestRockScreen<Content: View>: View {
     /// Top of the title's text box, and of the helper line. Both differ per
     /// screen in the design, so neither can be a shared constant.
     var titleTop: CGFloat
-    var subtitleTop: CGFloat
+    var subtitleTop: CGFloat = 0
 
     /// The helper line's colour. The two screens letter it differently.
     var subtitleColor: Color = AppTheme.stone
 
-    /// NEXT dims and stops responding when this is false.
+    /// The signpost bottom right, and what it is called out loud. Most screens
+    /// carry NEXT; the kitchen list carries JOIN.
+    var nextAsset: String = "ui-next-button"
+    var nextLabel: String = "Next"
+    var nextAspect: CGFloat = RockLayout.nextAspect
+
+    /// The sign dims and stops responding when this is false.
     var nextEnabled: Bool = true
 
     var onBack: () -> Void
@@ -119,7 +128,9 @@ struct ForestRockScreen<Content: View>: View {
                 rockArt(w: w, h: h)
                 titleText(w: w, h: h)
                 content(w, h)
-                subtitleText(w: w, h: h)
+                if !subtitle.isEmpty {
+                    subtitleText(w: w, h: h)
+                }
                 nextButton(w: w, h: h)
                 backButton(w: w, h: h)
             }
@@ -164,14 +175,12 @@ struct ForestRockScreen<Content: View>: View {
         let buttonW = w * RockLayout.nextWidth
 
         return Button(action: onNext) {
-            RockArt.image("ui-next-button",
-                          width: buttonW,
-                          aspect: RockLayout.nextAspect)
+            RockArt.image(nextAsset, width: buttonW, aspect: nextAspect)
         }
         .buttonStyle(.plain)
         .opacity(nextEnabled ? 1 : 0.5)
         .disabled(!nextEnabled)
-        .accessibilityLabel("Next")
+        .accessibilityLabel(nextLabel)
         // Anchored top-left, the way Figma reports it. Offsetting rather than
         // centring keeps the placement right whatever height the drawing is.
         .offset(x: w * RockLayout.nextLeft, y: h * RockLayout.nextTop)

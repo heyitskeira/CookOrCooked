@@ -1,0 +1,8 @@
+{
+  "images" : [
+    { "idiom" : "universal", "scale" : "1x" },
+    { "filename" : "ui-assesmble-and-decorate-blank-progress-bar@2x.png", "idiom" : "universal", "scale" : "2x" },
+    { "filename" : "ui-assesmble-and-decorate-blank-progress-bar@3x.png", "idiom" : "universal", "scale" : "3x" }
+  ],
+  "info" : { "author" : "xcode", "version" : 1 }
+}

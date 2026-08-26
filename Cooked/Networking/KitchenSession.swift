@@ -1385,12 +1385,11 @@ final class KitchenSession: ObservableObject {
         let answer: NetMessage
         let local: DrawerReply
 
+        // Occupancy is the only thing a shelf can refuse on now — the
+        // per-food temperature rule that used to be checked here is gone
+        // (see `Drawer` in DrawerStation.swift).
         if drawerSlots[slot] != nil {
-            let reason = "That shelf is already taken"
-            answer = .drawerRefused(slot: slot, reason: reason)
-            local = .refused(slot: slot, reason: reason)
-        } else if !Drawer.canStore(item.foodID, inSlot: slot) {
-            let reason = Drawer.rejectionReason(for: item.foodID, name: item.name)
+            let reason = Drawer.occupiedMessage
             answer = .drawerRefused(slot: slot, reason: reason)
             local = .refused(slot: slot, reason: reason)
         } else {

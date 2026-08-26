@@ -7,9 +7,15 @@
 
 import SwiftUI
 
+/// Which sign was tapped. Both routes now stop at the chef-name screen first,
+/// so this records where to carry on to once a name has been entered.
+fileprivate enum StartRoute: String, Identifiable {
+    case create, join
+    var id: String { rawValue }
+}
+
 struct StartScreenView: View {
-    @State private var showKitchenName = false
-    @State private var showJoinKitchen = false
+    @State private var route: StartRoute?
     @State private var showSettings = false
 
     /// The kitchen this device was in when the app last closed, if it is still
@@ -80,11 +86,8 @@ struct StartScreenView: View {
                 .padding(24)
             }
             .frame(width: w, height: h)
-            .fullScreenCover(isPresented: $showKitchenName) {
-                KitchenNameView()
-            }
-            .fullScreenCover(isPresented: $showJoinKitchen) {
-                JoinKitchenView()
+            .fullScreenCover(item: $route) { route in
+                ChefNameStep(route: route)
             }
             // Presented from `resumable` being set rather than a flag, so it
             // raises itself the moment the launch check finds a live kitchen —
@@ -98,10 +101,12 @@ struct StartScreenView: View {
         }
         .ignoresSafeArea()
         .onAppear(perform: checkForKitchenToRejoin)
-        // Game over -> collapse the whole cover stack back to here.
+        // Game over -> collapse the whole cover stack back to here. Dropping
+        // `route` takes the name screen and everything it presented with it, so
+        // one assignment folds the setup stack away; `resumable` is a separate
+        // cover of its own and has to be cleared alongside it.
         .onReceive(NotificationCenter.default.publisher(for: .returnToStart)) { _ in
-            showKitchenName = false
-            showJoinKitchen = false
+            route = nil
             resumable = nil
         }
     }
@@ -136,16 +141,39 @@ struct StartScreenView: View {
     // MARK: - Actions (unchanged)
 
     private func createKitchen() {
-        // Host flow: name the kitchen first, then open the kitchen
-        showKitchenName = true
+        // Host flow: name yourself, then name the kitchen, then open it.
+        route = .create
     }
 
     private func joinKitchen() {
-        showJoinKitchen = true
+        route = .join
     }
 
     private func openSettings() {
         showSettings = true
+    }
+}
+
+// MARK: - Chef name step
+
+/// Wraps `PlayerNameView` with the screen that comes after it.
+///
+/// Keeping the "what next" here rather than inside `PlayerNameView` leaves that
+/// screen with no opinion about the flow — it just reports that a name was
+/// entered, and this decides where that leads.
+private struct ChefNameStep: View {
+    let route: StartRoute
+
+    @State private var named = false
+
+    var body: some View {
+        PlayerNameView { named = true }
+            .fullScreenCover(isPresented: $named) {
+                switch route {
+                case .create: KitchenNameView()
+                case .join:   JoinKitchenView()
+                }
+            }
     }
 }
 

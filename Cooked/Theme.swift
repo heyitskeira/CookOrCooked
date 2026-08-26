@@ -36,6 +36,15 @@ enum AppTheme {
     /// against the woodland art.
     static let sand = Color(hex: 0xE1CBB0)
 
+    /// "stone - dark grey" in the design file. The outline on the lettering,
+    /// and darker than `ink` reads on the rock.
+    static let stone = Color(hex: 0x272320)
+
+    /// The chef's own typed name: a warm brown lettering over the darker
+    /// brown it is outlined in.
+    static let bark = Color(hex: 0x645144)
+    static let barkDeep = Color(hex: 0x493A2F)
+
     // Warm kitchen backdrop used across screens
     static var background: some View {
         LinearGradient(

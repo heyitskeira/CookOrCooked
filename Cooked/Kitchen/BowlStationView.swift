@@ -177,6 +177,7 @@ struct BowlStationView: View {
                 }
 
                 StationHands(inventory: inventory, geo: geo)
+                StationTimer(secondsRemaining: session.secondsRemaining, geo: geo)
 
                 StationBackButton(geo: geo, action: leave)
                 StationHelpButton(geo: geo, action: flashTutorial)

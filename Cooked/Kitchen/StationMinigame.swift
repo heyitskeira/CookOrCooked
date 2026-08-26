@@ -61,6 +61,18 @@ final class StationMinigame: ObservableObject {
     /// close to the centre swings the angle wildly. (`WhiskOverlay.centerSize`)
     private let centreDeadZone = 34.0
 
+    /// The two motions that are a finger going round and round.
+    ///
+    /// Mixing *is* whisking — `MixOverlay` subclassed `WhiskOverlay` rather
+    /// than reimplementing the angle maths, and this keeps that. What differs
+    /// is which way round, and for how long.
+    private var isCircling: Bool { motion == .whisk || motion == .mix }
+
+    /// Long enough going the wrong way round to be told about it. A fixed
+    /// direction is invisible until something says so, and silence just reads
+    /// as the station being broken.
+    private let wrongWayGrace = 0.6
+
     /// A flick softer than this doesn't break the shell; harder than this
     /// makes a mess. (`EggOverlay`)
     private let flickTooSoft = 1.3
@@ -90,6 +102,11 @@ final class StationMinigame: ObservableObject {
     private var turnDirection = 0.0
     private var turnedThisFrame = 0.0
     private var currentSpeed = 0.0
+    /// How far the chef turned the *wrong* way this frame, and how long they
+    /// have been doing it. Only ever non-zero for a motion with a fixed
+    /// direction — whisking has no wrong way.
+    private var wrongTurnThisFrame = 0.0
+    private var secondsGoingWrongWay = 0.0
 
     /// Shaking / flicking, straight off the accelerometer.
     private var shakeAmount = 0.0
@@ -122,7 +139,12 @@ final class StationMinigame: ObservableObject {
         case .sift:      amountNeeded = 9.0    // SiftOverlay
         case .whisk:     amountNeeded = 5.5    // WhiskOverlay
         case .breakEgg:  amountNeeded = 1.0    // EggOverlay — a share, not seconds
-        case .mix:       amountNeeded = 3.0
+        // `MixOverlay.setUpStation` — 7 seconds of circling, not the 3 this
+        // used to carry. That 3 was the hold default, from back when mixing
+        // was a press-and-wait here; the overlay it replaces has always been
+        // the longer job, and mixing four things into dough should not take
+        // less work than melting one pat of butter.
+        case .mix:       amountNeeded = 7.0
         case .melt:      amountNeeded = 3.0
         // Here for completeness — the chopping page still counts its own taps
         // in `ChoppingStationView.registerChopTap`, at this same 7.
@@ -130,6 +152,16 @@ final class StationMinigame: ObservableObject {
         // The bin has its own aiming screen; this never runs for it.
         case .throwAway: amountNeeded = 1.0
         }
+
+        // Mixing is circled anticlockwise and only anticlockwise, so its
+        // direction is decided here rather than learned from the chef's first
+        // movement. Whisking keeps learning — it accepts either way round, and
+        // that is what makes the two stations feel like different jobs despite
+        // sharing every line of the angle maths.
+        //
+        // Screen coordinates run y-down, so a *positive* angle change is
+        // clockwise and anticlockwise is -1.
+        turnDirection = motion == .mix ? -1 : 0
     }
 
     deinit {
@@ -207,7 +239,7 @@ final class StationMinigame: ObservableObject {
     /// The finger moved while circling. `centre` is the middle of the surface
     /// being circled around.
     func dragged(to point: CGPoint, around centre: CGPoint) {
-        guard !isFinished, motion == .whisk else { return }
+        guard !isFinished, isCircling else { return }
 
         let across = Double(point.x - centre.x)
         let up = Double(point.y - centre.y)
@@ -231,12 +263,18 @@ final class StationMinigame: ObservableObject {
         if change < -.pi { change += 2 * .pi }
 
         // The first real movement decides which way round counts as forwards,
-        // so scrubbing back and forth gets the chef nowhere.
+        // so scrubbing back and forth gets the chef nowhere. Motions with a
+        // direction of their own set `turnDirection` up front and never come
+        // in here.
         if turnDirection == 0, abs(change) > 0.05 {
             turnDirection = change > 0 ? 1 : -1
         }
         let forward = change * turnDirection
-        if forward > 0 { turnedThisFrame += forward }
+        if forward > 0 {
+            turnedThisFrame += forward
+        } else {
+            wrongTurnThisFrame -= forward
+        }
     }
 
     func dragEnded() {
@@ -270,7 +308,7 @@ final class StationMinigame: ObservableObject {
         guard dt > 0 else { return }
 
         switch motion {
-        case .hold, .mix, .melt, .throwAway:
+        case .hold, .melt, .throwAway:
             isWorking = isPressing
             if isWorking { amountDone += dt }
 
@@ -279,13 +317,15 @@ final class StationMinigame: ObservableObject {
             isWorking = hasMotionSensor ? shakeAmount >= shakeNeeded : isPressing
             if isWorking { amountDone += dt }
 
-        case .whisk:
+        case .whisk, .mix:
             let speedNow = turnedThisFrame / dt
             turnedThisFrame = 0
             // Blended into the running speed so the bar doesn't flicker.
             currentSpeed += (speedNow - currentSpeed) * 0.35
             isWorking = isDragging && currentSpeed >= speedNeeded
             if isWorking { amountDone += dt }
+
+            nudgeIfGoingTheWrongWay(dt: dt)
 
         case .breakEgg:
             secondsSinceFlick += dt
@@ -305,6 +345,26 @@ final class StationMinigame: ObservableObject {
 
         publish()
         if amountDone >= amountNeeded { finish() }
+    }
+
+    /// Circling steadily the wrong way round earns nothing, which on its own
+    /// just looks like the station ignoring you. Say so.
+    ///
+    /// Only ever fires for mixing: whisking learns its direction from the
+    /// chef's first movement, so it has no wrong way to go.
+    private func nudgeIfGoingTheWrongWay(dt: Double) {
+        let goingWrong = wrongTurnThisFrame > 0 && turnedThisFrame == 0
+        wrongTurnThisFrame = 0
+
+        guard goingWrong else {
+            secondsGoingWrongWay = 0
+            return
+        }
+        secondsGoingWrongWay += dt
+        // `say` clears itself after a beat, so this re-arms on its own if they
+        // carry on going the wrong way.
+        guard secondsGoingWrongWay >= wrongWayGrace, notice == nil else { return }
+        say("Other way round")
     }
 
     /// Watches for one sharp jolt, then judges how hard it was.
@@ -390,7 +450,7 @@ struct MinigameSurface: View {
 
     private func gesture(around centre: CGPoint) -> AnyGesture<Void> {
         switch game.motion {
-        case .whisk:
+        case .whisk, .mix:
             return AnyGesture(DragGesture(minimumDistance: 0)
                 .onChanged { game.dragged(to: $0.location, around: centre) }
                 .onEnded { _ in game.dragEnded() }
@@ -415,7 +475,7 @@ struct MinigameSurface: View {
                 .onEnded { _ in game.tapped() }
                 .map { _ in () })
 
-        case .hold, .sift, .mix, .melt, .throwAway:
+        case .hold, .sift, .melt, .throwAway:
             // Press and hold. `minimumDistance: 0` is what makes a finger that
             // lands and never moves register at all.
             return AnyGesture(DragGesture(minimumDistance: 0)

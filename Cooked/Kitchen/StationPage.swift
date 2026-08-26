@@ -30,7 +30,7 @@ struct StationPage: View {
     /// main-actor state that `View` conformance implies.
     nonisolated static func exists(for station: StationID) -> Bool {
         switch station {
-        case .chopping, .bowl1, .bowl2, .ovenServe: return true
+        case .chopping, .bowl1, .bowl2, .mixing, .ovenServe: return true
         default: return false
         }
     }
@@ -62,7 +62,15 @@ struct StationPage: View {
         case .chopping:
             ChoppingStationView(station: station, session: session,
                                 inventory: inventory, onClose: onClose)
-        case .bowl1, .bowl2:
+        // Mixing joins the bowls rather than getting a page of its own. The
+        // mix-dough reference frames are drawn on the same wooden bowl on the
+        // same slab — they are even captioned BOWL STATION — and the page is
+        // written per-recipe, not per-station: it reads its cards, their
+        // requirement icons and its drop button out of `Recipe`/`GatingBridge`.
+        // Pointed at `.mixing` it shows the one action that counter has, with
+        // its four ingredients on the card. A second file would have been the
+        // same file with a different bowl.
+        case .bowl1, .bowl2, .mixing:
             BowlStationView(station: station, session: session,
                             inventory: inventory, onClose: onClose)
         // Pre-heating and baking. Serving also nominally belongs to this

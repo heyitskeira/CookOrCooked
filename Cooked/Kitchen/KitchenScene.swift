@@ -429,6 +429,10 @@ final class KitchenScene: SKScene {
     // MARK: Input
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        // A frozen kitchen takes no input. The pause overlay covers the screen
+        // and swallows taps anyway, but touch delivery to an SKScene does not
+        // stop just because the scene is paused.
+        if session?.isFrozen == true { return }
         guard let touch = touches.first else { return }
 
         // The game is over, so any tap restarts it.
@@ -752,7 +756,7 @@ final class KitchenScene: SKScene {
             return
         }
 
-        // Serving is no longer something one chef does at the oven: the whole
+        // Serving is no longer something one chef does at a station: the whole
         // team has to gather in the middle of the room and press together (see
         // ServeRitual). Point anyone who walks up here holding the finished
         // cake at the floor, rather than opening a popup that cannot serve.
@@ -762,8 +766,9 @@ final class KitchenScene: SKScene {
             return
         }
 
-        // Every other station now shows the SwiftUI popup (drop/pick-up vs do
-        // action). The popup calls back into `beginAction` if the chef acts.
+        // Every other station shows the SwiftUI popup (drop/pick-up vs do an
+        // action). The popup reads the candidates itself and calls back into
+        // `beginAction` once the chef picks one — the scene doesn't decide here.
         onArriveStation?(station)
     }
 
@@ -1007,6 +1012,21 @@ final class KitchenScene: SKScene {
 
     // MARK: Loop
 
+    /// Stop or restart the whole kitchen — chefs mid-walk, minigame timers, the
+    /// serve bar, the lot.
+    ///
+    /// `SKScene.isPaused` is the right lever because it freezes actions and
+    /// stops `update(_:)` outright, so a chef halfway through a walk stays
+    /// exactly halfway rather than arriving at a station nobody can open. On
+    /// the way back out `lastUpdate` is zeroed: it holds a timestamp from
+    /// before the freeze, and left alone the first live frame would be handed a
+    /// ninety-second delta.
+    func setFrozen(_ frozen: Bool) {
+        guard isPaused != frozen else { return }
+        isPaused = frozen
+        if !frozen { lastUpdate = 0 }
+    }
+
     override func update(_ currentTime: TimeInterval) {
         if lastUpdate == 0 { lastUpdate = currentTime }
         var gap = currentTime - lastUpdate
@@ -1018,6 +1038,22 @@ final class KitchenScene: SKScene {
             // else, then tell the host where we are.
             state.apply(session.snapshot)
             syncRemoteChefs(session)
+
+            // Frozen: the host has stepped away and the kitchen is held still
+            // until they come back. Mirroring the roster is worth doing — the
+            // greyed-out chefs should be right — but nothing may advance:
+            // no minigame timers, no position reports, no station availability
+            // changing under a player who cannot act on it.
+            //
+            // `setFrozen` also stops SpriteKit's own clock, so in practice this
+            // guard rarely runs. It is here because SpriteView is entitled to
+            // reset `isPaused` on a SwiftUI redraw, and a kitchen that quietly
+            // un-froze itself would be a far worse bug than a wasted check.
+            if session.isFrozen {
+                refreshHUD()
+                return
+            }
+
             resolveWaiting(session)
             session.reportPosition(x: Double(chef.position.x / size.width),
                                    y: Double(chef.position.y / size.height),

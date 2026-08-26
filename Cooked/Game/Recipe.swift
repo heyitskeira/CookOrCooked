@@ -180,6 +180,20 @@ final class GameState {
         isOver = false
         didWin = false
     }
+
+    /// Put a saved match back exactly where it was.
+    ///
+    /// Distinct from `apply(_:)`, which mirrors a live host: this is the host
+    /// itself coming back from disk after its app died, so `isOver`/`didWin`
+    /// are recomputed from the restored facts rather than trusted. A file
+    /// written on the tick the clock ran out must not resume as a playable
+    /// game with zero seconds on it.
+    func restore(completed: Set<Int>, timeRemaining: TimeInterval) {
+        self.completed = completed
+        self.timeRemaining = max(0, timeRemaining)
+        didWin = Recipe.goalIDs.allSatisfy { completed.contains($0) }
+        isOver = didWin || self.timeRemaining <= 0
+    }
     
     func tick(_ dt: TimeInterval) {
         guard !isOver else { return }

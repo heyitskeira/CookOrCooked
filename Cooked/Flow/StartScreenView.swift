@@ -12,6 +12,11 @@ struct StartScreenView: View {
     @State private var showJoinKitchen = false
     @State private var showSettings = false
 
+    /// The kitchen this device was in when the app last closed, if it is still
+    /// recent enough to be worth reopening. Read once on appear rather than
+    /// computed in `body`: it touches UserDefaults, and body runs constantly.
+    @State private var resumable: ResumableKitchen?
+
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
@@ -81,16 +86,37 @@ struct StartScreenView: View {
             .fullScreenCover(isPresented: $showJoinKitchen) {
                 JoinKitchenView()
             }
+            // Presented from `resumable` being set rather than a flag, so it
+            // raises itself the moment the launch check finds a live kitchen —
+            // which is the whole promise: reopen the app, land back in the room.
+            .fullScreenCover(item: $resumable) { saved in
+                ResumeKitchenView(saved: saved)
+            }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
             }
         }
         .ignoresSafeArea()
+        .onAppear(perform: checkForKitchenToRejoin)
         // Game over -> collapse the whole cover stack back to here.
         .onReceive(NotificationCenter.default.publisher(for: .returnToStart)) { _ in
             showKitchenName = false
             showJoinKitchen = false
+            resumable = nil
         }
+    }
+
+    /// Look for a kitchen worth walking back into.
+    ///
+    /// Only a match that was actually under way reopens by itself. A lobby that
+    /// was never started is not urgent — nobody is standing in a frozen kitchen
+    /// waiting on it — and hijacking the start screen for one would be
+    /// obnoxious every time somebody backed out of setting a game up.
+    private func checkForKitchenToRejoin() {
+        guard resumable == nil,
+              let saved = RoomResumeStore.resumable,
+              saved.wasMidMatch else { return }
+        resumable = saved
     }
 
     private var settingsButton: some View {

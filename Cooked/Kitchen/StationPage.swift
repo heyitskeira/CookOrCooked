@@ -68,6 +68,12 @@ struct StationPage: View {
         case .bowl1, .bowl2:
             BowlStationView(station: station, session: session,
                             inventory: inventory, onClose: onClose)
+        // Pre-heating and baking. Serving also nominally belongs to this
+        // counter, but it is the ritual out on the map and is filtered out of
+        // the page's action list — see `OvenStationView.action`.
+        case .ovenServe:
+            OvenStationView(station: station, session: session,
+                            inventory: inventory, onClose: onClose)
         default:
             // Unreachable via `exists(for:)`, and harmless if a caller ever
             // skips that check: the station simply closes again rather than

@@ -1323,6 +1323,15 @@ final class KitchenSession: ObservableObject {
         isHost ? stationOutput[station.rawValue] : snapshot.outputFood(at: station)
     }
 
+    /// Seconds left on the kitchen clock (host reads its own game; guest the
+    /// snapshot) — the same host-aware split `outputFood` and `depositedFoods`
+    /// use, and for the same reason: a solo session never starts the 10Hz tick
+    /// that refreshes the snapshot, so a direct snapshot read would show a
+    /// clock frozen at 15:00 for the whole round.
+    var secondsRemaining: TimeInterval {
+        isHost ? game.timeRemaining : snapshot.timeRemaining
+    }
+
     /// Ingredients dropped at a station so far (host table / guest snapshot).
     func depositedFoods(at station: StationID) -> [String] {
         isHost ? (deposited[station.rawValue] ?? []) : snapshot.depositedFoods(at: station)
@@ -1385,12 +1394,11 @@ final class KitchenSession: ObservableObject {
         let answer: NetMessage
         let local: DrawerReply
 
+        // Occupancy is the only thing a shelf can refuse on now — the
+        // per-food temperature rule that used to be checked here is gone
+        // (see `Drawer` in DrawerStation.swift).
         if drawerSlots[slot] != nil {
-            let reason = "That shelf is already taken"
-            answer = .drawerRefused(slot: slot, reason: reason)
-            local = .refused(slot: slot, reason: reason)
-        } else if !Drawer.canStore(item.foodID, inSlot: slot) {
-            let reason = Drawer.rejectionReason(for: item.foodID, name: item.name)
+            let reason = Drawer.occupiedMessage
             answer = .drawerRefused(slot: slot, reason: reason)
             local = .refused(slot: slot, reason: reason)
         } else {

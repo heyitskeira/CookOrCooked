@@ -66,6 +66,16 @@ enum GatingBridge {
         }
     }
 
+    /// A prep rather than a raw ingredient: anything some action produces.
+    ///
+    /// Worth getting right wherever a food goes back into a hand — a held prep
+    /// locks that hand until it's put down, and a prep mislabelled as raw slips
+    /// straight past that rule. Taking something off the storage rack is one
+    /// such place: everything parked there was a prep on the way in.
+    static func isPrep(_ foodID: String) -> Bool {
+        Recipe.actions.contains { $0.output == foodID }
+    }
+
     /// Display name for any food id — raw ingredients and preps alike. Used by
     /// the inventory bar, deposit toasts, and the result popup.
     static func displayName(_ foodID: String) -> String {

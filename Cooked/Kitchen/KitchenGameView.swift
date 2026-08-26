@@ -72,10 +72,11 @@ struct KitchenGameView: View {
                     .transition(.opacity)
                 }
 
-                // Chopping gets its own full-screen page (see the
-                // .fullScreenCover below) — every other station still uses
-                // this small popup over the dimmed kitchen.
-                if let station = activeStation, station != .chopping {
+                // Stations rebuilt against final art get their own
+                // full-screen page (see the .fullScreenCover below) — every
+                // other one still uses this small popup over the dimmed
+                // kitchen.
+                if let station = activeStation, !StationPage.exists(for: station) {
                     StationPopupView(
                         station: station,
                         session: session,
@@ -234,20 +235,22 @@ struct KitchenGameView: View {
                     openRecipeStep = nil
                 }
             }
-            // Chopping's illustrated screen is a full page, not a card over
-            // the kitchen — a fullScreenCover isolates it from this view's
-            // own ZStack entirely, so nothing behind it (the map, the
-            // checklist, the station labels) can show through.
+            // An illustrated station is a full page, not a card over the
+            // kitchen — a fullScreenCover isolates it from this view's own
+            // ZStack entirely, so nothing behind it (the map, the checklist,
+            // the station labels) can show through.
             .fullScreenCover(isPresented: Binding(
-                get: { activeStation == .chopping },
+                get: { activeStation.map(StationPage.exists(for:)) ?? false },
                 set: { showing in if !showing { activeStation = nil } }
             )) {
-                ChoppingStationView(
-                    station: .chopping,
-                    session: session,
-                    inventory: inventory,
-                    onClose: { activeStation = nil }
-                )
+                if let station = activeStation {
+                    StationPage(
+                        station: station,
+                        session: session,
+                        inventory: inventory,
+                        onClose: { activeStation = nil }
+                    )
+                }
             }
         }
     }

@@ -22,6 +22,7 @@ struct PlayerNameView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var chefName: String
+    @State private var showSettings = false
     @FocusState private var nameFocused: Bool
 
     /// The field starts on whatever name this device last saved, so a returning
@@ -82,6 +83,13 @@ struct PlayerNameView: View {
                 PlayerIdentityStore.rename(to: trimmed)
                 nameFocused = false
                 onNext()
+            },
+            // Brio's pairing from the kitchen-name screen this replaced: back
+            // on one corner, settings on the other, and the keyboard put away
+            // before the cover comes up over it.
+            onSettings: {
+                nameFocused = false
+                showSettings = true
             }
         ) { w, h in
             nameField(w: w, h: h)
@@ -89,6 +97,9 @@ struct PlayerNameView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { nameFocused = false }
+        .fullScreenCover(isPresented: $showSettings) {
+            SettingsView()
+        }
     }
 
     // MARK: - Pieces

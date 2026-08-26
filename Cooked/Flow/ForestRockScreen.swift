@@ -113,6 +113,10 @@ struct ForestRockScreen<Content: View>: View {
     var onBack: () -> Void
     var onNext: () -> Void
 
+    /// Drawn opposite the back signpost when given. Carried over from the
+    /// kitchen-name screen this flow replaced, which paired the two corners.
+    var onSettings: (() -> Void)?
+
     /// The middle of the rock. Handed the screen's width and height so it can
     /// position its own pieces in the same fractions everything else uses.
     @ViewBuilder var content: (CGFloat, CGFloat) -> Content
@@ -145,6 +149,9 @@ struct ForestRockScreen<Content: View>: View {
                     nextButton(w: w, h: h)
                 }
                 backButton(w: w, h: h)
+                if let onSettings {
+                    settingsButton(w: w, h: h, action: onSettings)
+                }
             }
             .frame(width: w, height: h)
         }
@@ -194,6 +201,21 @@ struct ForestRockScreen<Content: View>: View {
         // Anchored top-left, the way Figma reports it. Offsetting rather than
         // centring keeps the placement right whatever height the drawing is.
         .offset(x: w * RockLayout.nextLeft, y: h * RockLayout.nextTop)
+    }
+
+    private func settingsButton(w: CGFloat, h: CGFloat,
+                                action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image("settings-button")
+                .resizable()
+                .scaledToFit()
+                .frame(height: h * RockLayout.backHeight)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Settings")
+        // Mirrors the back signpost across the screen, the same distance in.
+        .offset(x: w * (1 - RockLayout.backLeft) - h * RockLayout.backHeight,
+                y: h * 0.04)
     }
 
     private func backButton(w: CGFloat, h: CGFloat) -> some View {

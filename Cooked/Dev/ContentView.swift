@@ -169,6 +169,14 @@ struct ContentView: View {
                         previewStation = .chopping
                     }
 
+                    menuButton(title: "Stove station (final art)") {
+                        // Arrive with what the stove needs: the butter, and
+                        // the pan it has to sit in.
+                        inventory.pickUp(HeldIngredient(id: "butter", name: "Butter"))
+                        inventory.pickUp(HeldUtensil(id: "pan", name: "Pan"))
+                        previewStation = .stove
+                    }
+
                     menuButton(title: "Bowl station (final art)") {
                         // Arrive holding one of the four things a bowl wants,
                         // so the drop button has something to say.

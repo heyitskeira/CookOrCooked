@@ -30,7 +30,7 @@ struct StationPage: View {
     /// main-actor state that `View` conformance implies.
     nonisolated static func exists(for station: StationID) -> Bool {
         switch station {
-        case .chopping, .bowl1, .bowl2: return true
+        case .chopping, .bowl1, .bowl2, .stove: return true
         default: return false
         }
     }
@@ -62,6 +62,9 @@ struct StationPage: View {
         case .chopping:
             ChoppingStationView(station: station, session: session,
                                 inventory: inventory, onClose: onClose)
+        case .stove:
+            StoveStationView(station: station, session: session,
+                             inventory: inventory, onClose: onClose)
         case .bowl1, .bowl2:
             BowlStationView(station: station, session: session,
                             inventory: inventory, onClose: onClose)

@@ -313,11 +313,16 @@ enum FoodArt {
     /// piece of it in memory for the life of the process.
     static func art(_ id: String) -> UIImage? {
         if absent.contains(id) { return nil }
-        guard let found = UIImage(named: id) else {
-            absent.insert(id)
-            return nil
-        }
-        return found
+        if let found = UIImage(named: id) { return found }
+        // Most of the artwork ships under descriptive filenames rather than
+        // gameplay ids — "ingredient-sugar-sack", not "sugar" — and
+        // `StorageArt` is where those two vocabularies already meet. Asking it
+        // second means the station pages get the catalogue's own (higher
+        // resolution) art without a second copy of every ingredient being
+        // imported under an id-shaped name.
+        if let found = StorageArt.image(id) { return found }
+        absent.insert(id)
+        return nil
     }
 
     /// Ids known to have no imageset. Names only — no images are held here.

@@ -191,6 +191,14 @@ struct StationHands: View {
 
     @ObservedObject var inventory: PlayerInventory
     let geo: GeometryProxy
+    /// Frames the art direction measured for particular items, where a station
+    /// was given them. A pan hangs from a paw differently than a block of
+    /// butter does, and a bowl of melted butter differently again. Anything
+    /// not listed uses the shared slot below.
+    var frames: [String: CGRect] = [:]
+
+    private static let ingredientSlot = CGRect(x: 663, y: 290, width: 134, height: 104)
+    private static let utensilSlot = CGRect(x: 773, y: 276, width: 104, height: 131)
 
     var body: some View {
         ZStack {
@@ -207,12 +215,14 @@ struct StationHands: View {
 
             if let held = inventory.ingredient, let art = FoodArt.art(held.id) {
                 Image(uiImage: art).resizable().scaledToFit()
-                    .figmaPlaced(663, 290, 134, 104, alignment: .bottom, in: geo)
+                    .figmaPlaced(frames[held.id] ?? Self.ingredientSlot,
+                                 alignment: .bottom, in: geo)
             }
 
             if let tool = inventory.utensil, let art = FoodArt.art(tool.id) {
                 Image(uiImage: art).resizable().scaledToFit()
-                    .figmaPlaced(773, 276, 104, 131, alignment: .bottom, in: geo)
+                    .figmaPlaced(frames[tool.id] ?? Self.utensilSlot,
+                                 alignment: .bottom, in: geo)
             }
         }
     }
@@ -250,7 +260,7 @@ extension ActionMotion {
         case .sift:      return StationMinigame.hasMotionSensor ? "Shake to sift" : "Hold to sift"
         case .breakEgg:  return StationMinigame.hasMotionSensor ? "Flick down to crack" : "Tap to crack"
         case .mix:       return "Hold to mix"
-        case .melt:      return "Hold to melt"
+        case .melt:      return "Blow"
         case .hold:      return "Hold to work"
         case .throwAway: return "Throw it away"
         }
@@ -336,4 +346,39 @@ struct StationInstructionOverlay: View {
             }
         }
     }
+}
+
+// MARK: - Food out of its container
+
+extension FoodArt {
+
+    /// How a food looks tipped out of whatever carries it — sugar out of the
+    /// sack, butter out of its wrapper, melted butter out of its bowl.
+    ///
+    /// A station page draws its own bowl and its own pan, so the carried
+    /// artwork is wrong inside them: every prep's picture is *a bowl with the
+    /// prep in it*, which would put a bowl inside the bowl. Falls back to the
+    /// carried look, which is right for anything that has no separate loose
+    /// version (a whole egg looks the same wherever it sits).
+    ///
+    /// Two ways in, because the art arrived in two vocabularies: the id-shaped
+    /// name first (`meltedButter-loose`), then the catalogue's descriptive
+    /// name. Nothing here is derivable — "sugar loose" being called
+    /// `ingredient-sugar-pile` is a fact about the art, not a rule — so it is
+    /// a table rather than a convention.
+    static func looseArt(_ id: String) -> UIImage? {
+        if let art = art("\(id)-loose") { return art }
+        if let descriptive = looseNames[id], let art = art(descriptive) { return art }
+        return art(id)
+    }
+
+    private static let looseNames: [String: String] = [
+        "sugar":         "ingredient-sugar-pile",
+        "flour":         "ingredient-flour-pile",
+        "cream":         "prepared-cream-unwhipped",
+        "butter":        "ingredient-butter-unwrapped",
+        "crackedEgg":    "ingredient-egg-yolk",
+        "siftedFlour":   "prepared-flour-sifted",
+        "whippedCream":  "prepared-cream-whipped"
+    ]
 }

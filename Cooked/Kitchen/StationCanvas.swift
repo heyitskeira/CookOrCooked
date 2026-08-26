@@ -43,6 +43,12 @@ enum StationCanvas {
     static func rect(_ frame: CGRect, in geo: GeometryProxy) -> CGRect {
         rect(frame.minX, frame.minY, frame.width, frame.height, in: geo)
     }
+
+    /// A single design-space point on the device.
+    static func point(_ x: CGFloat, _ y: CGFloat, in geo: GeometryProxy) -> CGPoint {
+        CGPoint(x: (x - origin.x) * geo.size.width / size.width,
+                y: (y - origin.y) * geo.size.height / size.height)
+    }
 }
 
 extension View {
@@ -69,5 +75,27 @@ extension View {
                      in geo: GeometryProxy) -> some View {
         figmaPlaced(frame.minX, frame.minY, frame.width, frame.height,
                     alignment: alignment, in: geo)
+    }
+
+    /// Place a rotated element — the pan sitting at an angle on the stove.
+    ///
+    /// Figma reports a rotated layer's x/y as the top-left of its **bounding
+    /// box**, while w/h stay the size the layer would be unrotated. So the
+    /// given x/y isn't this view's corner: the corner of the box the rotated
+    /// view is inscribed in. Rebuilding that box is what puts the art where
+    /// the artboard shows it — using x/y as the frame's own origin lands it
+    /// well up and to the left of where it belongs.
+    func figmaPlaced(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat,
+                     rotation: Angle, in geo: GeometryProxy) -> some View {
+        let turn = abs(rotation.radians)
+        let boxWidth = w * cos(turn) + h * sin(turn)
+        let boxHeight = w * sin(turn) + h * cos(turn)
+        let centre = StationCanvas.point(x + boxWidth / 2, y + boxHeight / 2, in: geo)
+        let scaled = StationCanvas.rect(0, 0, w, h, in: geo)
+
+        return self
+            .frame(width: scaled.width, height: scaled.height)
+            .rotationEffect(rotation)
+            .position(centre)
     }
 }

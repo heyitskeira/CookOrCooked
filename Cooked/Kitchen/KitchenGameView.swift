@@ -24,7 +24,6 @@ struct KitchenGameView: View {
     // Drawer shelves. Local fallback only; host-owned once a game is running.
     @StateObject private var drawerBox = DrawerBox()
     @State private var showStorage = false
-    @State private var showDrawer = false
     /// True while a station screen is up inside the scene. SwiftUI chrome is
     /// drawn above the SpriteView, so the scene has to tell us to get out of
     /// the way — the station screen has its own hands.
@@ -58,16 +57,16 @@ struct KitchenGameView: View {
                 // Moving it doesn't help — top-centre covers three more
                 // stations. Rotten ingredients are marked on the hand instead.
 
+                // One overlay for the whole pantry now. The shelves used to be a
+                // second, separate screen reached from a second map pin; they
+                // are the Storage Rack tab inside this one.
                 if showStorage {
-                    StorageView(inventory: inventory, pantry: pantry, session: session, onClose: {
+                    StorageView(inventory: inventory,
+                                pantry: pantry,
+                                drawerBox: drawerBox,
+                                session: session,
+                                onClose: {
                         withAnimation(.easeInOut(duration: 0.2)) { showStorage = false }
-                    })
-                    .transition(.opacity)
-                }
-
-                if showDrawer {
-                    DrawerView(inventory: inventory, box: drawerBox, session: session, onClose: {
-                        withAnimation(.easeInOut(duration: 0.2)) { showDrawer = false }
                     })
                     .transition(.opacity)
                 }
@@ -199,22 +198,34 @@ struct KitchenGameView: View {
                 }
 
                 // Trigger: top-left, head chef only, hidden while already open.
+                // Placed by measurement rather than by padding — it is the
+                // hanging sign from the reference art, and it has to line up
+                // with the tree it hangs from in the background image.
                 if session.isHeadChef && !showRecipe {
-                    VStack(alignment: .leading) {
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.15)) { showRecipe = true }
-                        } label: {
-                            Image(systemName: "book.closed.fill")
-                                .font(.system(size: 20, weight: .bold))
-                                .foregroundStyle(AppTheme.ink)
-                                .frame(width: 44, height: 44)
-                                .background(Circle().fill(AppTheme.cream))
-                                .overlay(Circle().stroke(AppTheme.ink, lineWidth: 2))
+                    let frame = KitchenArt.bookFrame(in: geo.size)
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) { showRecipe = true }
+                    } label: {
+                        Group {
+                            if let art = UIImage(named: "btn-recipe-book-map") {
+                                Image(uiImage: art)
+                                    .resizable()
+                                    .scaledToFit()
+                            } else {
+                                // No art in the bundle — the old symbol button,
+                                // so the head chef can always reach the recipe.
+                                Image(systemName: "book.closed.fill")
+                                    .font(.system(size: 20, weight: .bold))
+                                    .foregroundStyle(AppTheme.ink)
+                                    .frame(width: 44, height: 44)
+                                    .background(Circle().fill(AppTheme.cream))
+                                    .overlay(Circle().stroke(AppTheme.ink, lineWidth: 2))
+                            }
                         }
-                        Spacer()
+                        .frame(width: frame.width, height: frame.height)
                     }
-                    .padding(16)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .position(x: frame.midX, y: frame.midY)
+                    .accessibilityLabel("Open the recipe")
                 }
             }
             .onAppear { build(size: geo.size) }
@@ -293,9 +304,6 @@ struct KitchenGameView: View {
         made.inventory = inventory
         made.onOpenStorage = {
             withAnimation(.easeInOut(duration: 0.2)) { showStorage = true }
-        }
-        made.onOpenDrawer = {
-            withAnimation(.easeInOut(duration: 0.2)) { showDrawer = true }
         }
         made.onHeadsDownChanged = { down in
             withAnimation(.easeInOut(duration: 0.15)) { headsDown = down }

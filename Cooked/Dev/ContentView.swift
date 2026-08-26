@@ -22,7 +22,6 @@ struct ContentView: View {
 
     // Storage pantry overlay + the shared inventory it fills (Kitchen map only).
     @State private var showStorage = false
-    @State private var showDrawer = false
     // Rot in hand blocks every tap but the bin; the map asks for this alert.
     @State private var showRottenAlert = false
     @StateObject private var inventory = PlayerInventory()
@@ -79,7 +78,7 @@ struct ContentView: View {
 
                     // Storage pantry, opened from the storage station.
                     if showStorage {
-                        StorageView(inventory: inventory, pantry: pantry, onClose: {
+                        StorageView(inventory: inventory, pantry: pantry, drawerBox: drawerBox, onClose: {
                             withAnimation(.easeInOut(duration: 0.2)) { showStorage = false }
                         })
                         .transition(.opacity)
@@ -92,13 +91,8 @@ struct ContentView: View {
                         .transition(.opacity)
                     }
 
-                    // Drawer shelves, opened from the drawer station.
-                    if showDrawer {
-                        DrawerView(inventory: inventory, box: drawerBox, onClose: {
-                            withAnimation(.easeInOut(duration: 0.2)) { showDrawer = false }
-                        })
-                        .transition(.opacity)
-                    }
+                    // The shelves are no longer their own screen — they open
+                    // as the Storage Rack tab inside StorageView above.
                 }
 
             } else {
@@ -188,9 +182,6 @@ struct ContentView: View {
                         scene.inventory = inventory
                         scene.onOpenStorage = {
                             withAnimation(.easeInOut(duration: 0.2)) { showStorage = true }
-                        }
-                        scene.onOpenDrawer = {
-                            withAnimation(.easeInOut(duration: 0.2)) { showDrawer = true }
                         }
                         scene.onRottenBlocked = {
                             withAnimation(.easeInOut(duration: 0.15)) { showRottenAlert = true }

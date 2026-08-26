@@ -2,21 +2,22 @@
 //  HandsNode.swift
 //  Cooked
 //
-//  The chef's own two hands, drawn side by side in the bottom-left of the
-//  kitchen map.
+//  The chef's own two paws, coming up into the bottom-right of the kitchen map.
 //
-//  Left hand carries the ingredient or the prep you just made, right hand
-//  carries the utensil. That split is not decoration: it is exactly the shape
-//  of `PlayerInventory` (one ingredient slot, one utensil slot), so the hands
-//  can never show a state the model can't hold.
+//  Left paw carries the ingredient or the prep you just made, right paw carries
+//  the utensil. That split is not decoration: it is exactly the shape of
+//  `PlayerInventory` (one ingredient slot, one utensil slot), so the hands can
+//  never show a state the model can't hold.
 //
 //  They belong to the map and only the map. Inside a station screen the motion
 //  is the whole picture, so the hands drop away entirely and come back — with
 //  whatever you just made — once you're out in the kitchen again.
 //
-//  ⚠️ All art here is placeholder — a mitten of a palm and a coloured chip for
-//  the item. `SKTexture` is used the moment an imageset named after the item id
-//  exists ("strawberries", "knife"), same convention as `ArtIcon`.
+//  The art is one image per animal containing *both* paws (`paw-squirrel` and
+//  friends), not one per hand. So a single sprite is drawn underneath, and the
+//  two hand nodes are invisible anchors parked over where each paw sits inside
+//  it — which is why the offsets below are fractions of the pair rather than a
+//  gap between two separate hands.
 //
 
 import SpriteKit
@@ -27,14 +28,30 @@ final class HandsNode: SKNode {
 
     // MARK: Layout
 
-    /// How far in from the left edge the first hand sits.
-    private let inset: CGFloat = 52
-    /// Gap between the two hands. Wide enough that the items they hold don't
-    /// touch, tight enough that they read as one pair.
-    private let spacing: CGFloat = 92
+    /// Width of the paw pair, as a fraction of the map artwork — not a fixed
+    /// number of points.
+    ///
+    /// Absolute sizing put the paws over Bowl Station 1 on a 852pt phone and
+    /// over four fifths of it on an SE, because the map shrinks with the screen
+    /// and a constant does not. Measuring against `KitchenArt.mapRect` keeps the
+    /// same clearance on every device, and keeps the paws on the artwork rather
+    /// than down in the letterbox band on an iPad.
+    private static let pairWidthFraction: CGFloat = 0.16
+
+    /// How far in from the artwork's right edge the pair sits, also a fraction.
+    private static let edgeInsetFraction: CGFloat = 0.018
+    /// Centre of each paw, as a fraction of the pair's width from its middle.
+    /// Measured off the art: the two paws sit a little inboard of the edges.
+    private let pawOffset: CGFloat = 0.24
     /// How far the hands slide down when hidden — far enough to clear the item.
     private let dropDistance: CGFloat = 150
 
+    /// Both paws in one picture. Nil until an animal is chosen, and nil forever
+    /// if the art is missing, in which case the placeholder mittens are drawn.
+    private var pawArt: SKSpriteNode?
+    /// How far above a paw's centre an item sits. Set by `layout(for:)`, since
+    /// it scales with the pair.
+    private var itemRise: CGFloat = 38
     private let leftHand: SKNode
     private let rightHand: SKNode
 
@@ -44,30 +61,39 @@ final class HandsNode: SKNode {
     private var shownPrep: String??
     private var shownUtensil: String??
 
-    private let restY: CGFloat
-
     // MARK: Setup
 
-    init(screenSize: CGSize) {
+    /// - Parameter colorIndex: the player's slot, which picks the animal. There
+    ///   is no avatar on `Player` yet, so this is the same handle the spawn
+    ///   marks and chef colours already key off — meaning a chef's paws stay
+    ///   the same on every device, for free.
+    init(screenSize: CGSize, colorIndex: Int = 0) {
         leftHand = SKNode()
         rightHand = SKNode()
-        restY = 46
         super.init()
 
         zPosition = 150
 
-        layout(for: screenSize)
-
-        // A slight splay so they read as a pair of hands coming up into frame
-        // rather than two objects sitting in a row.
-        leftHand.zRotation = 0.14
-        rightHand.zRotation = -0.14
+        // Behind the hand anchors, so an item always sits on top of the paw
+        // holding it.
+        if let art = UIImage(named: Self.pawName(for: colorIndex)) {
+            let sprite = SKSpriteNode(texture: SKTexture(image: art))
+            sprite.zPosition = -1
+            addChild(sprite)
+            pawArt = sprite
+        } else {
+            // No paw art in the bundle — the old placeholder mittens, so the
+            // map still shows what is in each hand.
+            buildPalm(on: leftHand)
+            buildPalm(on: rightHand)
+            leftHand.zRotation = 0.14
+            rightHand.zRotation = -0.14
+        }
 
         addChild(leftHand)
         addChild(rightHand)
 
-        buildPalm(on: leftHand)
-        buildPalm(on: rightHand)
+        layout(for: screenSize)
 
         alpha = 0
         isHidden = true
@@ -78,17 +104,56 @@ final class HandsNode: SKNode {
         fatalError("not used")
     }
 
-    /// Both hands live in the bottom-left, so this doesn't depend on the screen
-    /// width — but it stays a function of the size because the scene is built
-    /// at the safe-area size and resized to the view's real bounds afterwards,
-    /// and the day either hand moves to an edge this is where it gets fixed.
-    func layout(for screenSize: CGSize) {
-        leftHand.position = CGPoint(x: inset, y: restY)
-        rightHand.position = CGPoint(x: inset + spacing, y: restY)
+    /// One animal per player slot. Six paws, so a fifth player would wrap —
+    /// which cannot happen while a kitchen holds four.
+    private static let paws = [
+        "paw-squirrel", "paw-raccoon", "paw-rabbit", "paw-fox", "paw-bear", "paw-beaver"
+    ]
+
+    private static func pawName(for colorIndex: Int) -> String {
+        paws[((colorIndex % paws.count) + paws.count) % paws.count]
     }
 
-    /// The dummy hand itself: a rounded palm with a thumb. Replace this one
-    /// function with a sprite and every screen gets the real art.
+    /// The pair sits in the bottom-right, so this *does* depend on the screen
+    /// width — and the scene is built at the safe-area size then resized to the
+    /// view's real bounds, so it has to be re-run on every resize or the paws
+    /// end up short of the corner.
+    func layout(for screenSize: CGSize) {
+        let map = KitchenArt.mapRect(in: screenSize)
+        guard map.width > 0 else { return }
+
+        let width = map.width * Self.pairWidthFraction
+        // From the texture, not a shared constant: the six paw images run from
+        // 298x220 to 356x220, so one hardcoded ratio squashes the beaver by 12%
+        // and stretches the fox and rabbit. Only the squirrel — the default —
+        // would have looked right.
+        let height = width / Self.aspect(of: pawArt?.texture)
+
+        let centreX = map.maxX - map.width * Self.edgeInsetFraction - width / 2
+        // A little below the artwork's bottom edge, so the paws read as
+        // reaching up into frame rather than resting on the floor.
+        let centreY = map.minY + height / 2 - height * 0.10
+
+        pawArt?.size = CGSize(width: width, height: height)
+        pawArt?.position = CGPoint(x: centreX, y: centreY)
+
+        itemRise = height * 0.26
+        leftHand.position = CGPoint(x: centreX - width * pawOffset, y: centreY)
+        rightHand.position = CGPoint(x: centreX + width * pawOffset, y: centreY)
+        for hand in [leftHand, rightHand] {
+            hand.childNode(withName: "item")?.position = CGPoint(x: 0, y: itemRise)
+        }
+    }
+
+    /// Falls back to the squirrel's ratio only when there is no texture at all,
+    /// which is the placeholder-mitten path.
+    private static func aspect(of texture: SKTexture?) -> CGFloat {
+        guard let size = texture?.size(), size.height > 0 else { return 314.0 / 220.0 }
+        return size.width / size.height
+    }
+
+    /// The stand-in used only when the paw art is missing: a rounded palm with
+    /// a thumb.
     private func buildPalm(on hand: SKNode) {
         let palm = SKShapeNode(rectOf: CGSize(width: 62, height: 74), cornerRadius: 26)
         palm.fillColor = SKColor(red: 0.93, green: 0.78, blue: 0.64, alpha: 1)
@@ -131,7 +196,8 @@ final class HandsNode: SKNode {
 
         let item = SKNode()
         item.name = "item"
-        item.position = CGPoint(x: 0, y: 44)
+        // In the pad of the paw that holds it, not floating above the claws.
+        item.position = CGPoint(x: 0, y: itemRise)
 
         if let art = FoodArt.art(id) {
             let sprite = SKSpriteNode(texture: SKTexture(image: art))

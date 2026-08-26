@@ -40,9 +40,17 @@ be meaningful.
 
 ## How a match works
 
-The kitchen has ten stations (`StationID` in `Game/Recipe.swift`) laid out
-around the walls, with an empty floor in the middle. Chefs walk up to a
-station, and a SwiftUI popup (`StationPopupView`) offers whatever action is
+The kitchen has nine stations (`StationID.mapStations` in `Game/Recipe.swift`)
+ringing a forest clearing, with the serve stone in the middle. Their positions
+are measured off the reference art rather than chosen by hand — the stone pads
+the props stand on are painted into `bg-kitchen-clearing`, so a station cannot
+be moved without moving its pad too.
+
+`StationID` itself still has ten cases. The tenth, `drawer`, is not on the map:
+its shelves are the Storage Rack tab inside the pantry. The case stays because
+it is the key those shelves travel under in `GameSnapshot` and `RoomResume`.
+
+Chefs walk up to a station, and a SwiftUI popup (`StationPopupView`) offers whatever action is
 possible there — dropping off an ingredient, picking up a finished prep, or
 doing an action if the right ingredients are deposited and the right utensil
 is in hand.
@@ -74,7 +82,8 @@ Cooked/
                 and the UI that shows them
   Audio/        Music and sound effects
   Screens/      The full-screen minigames each action opens, plus the
-                storage pantry and the drawer (cold/room-temp shelves)
+                storage room — utensils, ingredients and the storage
+                rack (cold/room-temp shelves), as three tabs
   Dev/          A manual test menu for opening individual screens in
                 isolation — not part of the real player-facing flow
   Theme.swift   Shared colours, fonts, and button styles

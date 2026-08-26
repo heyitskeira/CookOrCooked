@@ -19,8 +19,13 @@ struct DrawerView: View {
     @ObservedObject var box: DrawerBox
     /// The live game. When present the drawer is host-authoritative.
     var session: KitchenSession? = nil
+    /// False when this is being shown as the storage room's Storage Rack tab,
+    /// which draws its own back button and tab bar above it. Two stacked back
+    /// buttons that do the same thing is the sort of thing you only notice once
+    /// it ships.
+    var showsCloseButton: Bool = true
     var onClose: () -> Void
-    
+
     /// Shelf we've asked the host about and are waiting on.
     @State private var pendingSlot: Int? = nil
     @State private var notice: String? = nil
@@ -32,18 +37,18 @@ struct DrawerView: View {
     
     var body: some View {
         ZStack {
-            AppTheme.background
-            
+            if showsCloseButton { AppTheme.background }
+
             VStack(spacing: 22) {
-                header
+                if showsCloseButton { header }
                 shelves
                 handHint
             }
             .frame(maxWidth: 620)
-            .padding(.horizontal, 40)
-            .padding(.vertical, 28)
+            .padding(.horizontal, showsCloseButton ? 40 : 0)
+            .padding(.vertical, showsCloseButton ? 28 : 0)
         }
-        .ignoresSafeArea()
+        .ignoresSafeArea(edges: showsCloseButton ? .all : [])
         .overlay { noticePopup }
         // Host answers synchronously; a guest's reply lands here a moment later.
         .onChange(of: session?.drawerReply) { _, _ in applyReply() }

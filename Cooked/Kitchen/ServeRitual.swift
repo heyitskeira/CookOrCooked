@@ -31,22 +31,52 @@ nonisolated enum ServeRitual {
     /// This one spot does double duty: it is where every chef starts the match
     /// and where the whole team has to come back to serve. Start together,
     /// finish together.
-    static let zoneUnitPosition = CGPoint(x: 0.50, y: 0.52)
-
-    /// Big enough to hold four chefs on their own marks without them touching.
     ///
-    /// Use `zoneRadius(for:)` rather than this raw number: the marks are placed
-    /// in screen-relative units and this is in points, so on a very different
-    /// aspect ratio the marks can fall outside a fixed circle — which would put
-    /// a chef on their own mark and *outside* the serve zone, making the serve
-    /// impossible.
-    static let zoneRadius: CGFloat = 58
+    /// Measured off the reference art rather than eyeballed at dead centre: the
+    /// clearing's middle stone is where the mockup letters GATHER HERE TO
+    /// SERVE, and it sits a little below the geometric centre of the screen.
+    /// Only the position moved — the ritual itself is untouched.
+    static let zoneUnitPosition = CGPoint(x: 0.5031, y: 0.4447)
 
-    static func zoneRadius(for sceneSize: CGSize) -> CGFloat {
-        let furthest = spawnOffsets
-            .map { hypot($0.x * sceneSize.width, $0.y * sceneSize.height) }
-            .max() ?? 0
-        return max(zoneRadius, furthest + 22)
+    /// The zone is an **ellipse**, not a circle, because the stone it sits on is
+    /// one: measured off `bg-kitchen-clearing` the middle stone is 263x97 on the
+    /// 1748x804 artboard — a flat oval in perspective, not a disc seen head-on.
+    ///
+    /// A circle that fit inside it would have to shrink to the stone's *short*
+    /// axis and end up too small to stand four chefs on; a circle that held the
+    /// chefs spilled well past the stone onto the grass. Matching the shape
+    /// solves both, and is the only way the ring reads as painted onto the
+    /// clearing rather than laid over it.
+    ///
+    /// Fractions of `KitchenArt.mapRect`, so the ring tracks the stone at any
+    /// screen size. Inset slightly so the stroke sits just inside the stone's
+    /// edge instead of straddling it.
+    static let zoneUnitRadii = CGSize(width: 0.0752 * 0.94, height: 0.0603 * 0.94)
+
+    /// The zone's radii in points, for drawing and for the containment tests.
+    static func zoneRadii(for sceneSize: CGSize) -> CGSize {
+        let map = KitchenArt.mapRect(in: sceneSize)
+        return CGSize(width: zoneUnitRadii.width * map.width,
+                      height: zoneUnitRadii.height * map.height)
+    }
+
+    /// Is `point` inside the zone centred on `centre`?
+    ///
+    /// The ellipse equivalent of the distance check this replaced: normalise
+    /// each axis by its own radius and ask whether the result lands inside the
+    /// unit circle. `slack` widens both axes by a few points, which is what
+    /// gives a tap a little forgiveness without moving the ring you can see.
+    static func zoneContains(_ point: CGPoint,
+                             centre: CGPoint,
+                             in sceneSize: CGSize,
+                             slack: CGFloat = 0) -> Bool {
+        let r = zoneRadii(for: sceneSize)
+        let rx = r.width + slack
+        let ry = r.height + slack
+        guard rx > 0, ry > 0 else { return false }
+        let nx = (point.x - centre.x) / rx
+        let ny = (point.y - centre.y) / ry
+        return nx * nx + ny * ny <= 1
     }
 
     /// The four marks on the floor, one per chef.
@@ -62,12 +92,29 @@ nonisolated enum ServeRitual {
                        y: zoneUnitPosition.y + offset.y)
     }
 
+    /// Four marks in a shallow row rather than a 2x2 block.
+    ///
+    /// The stone is roughly three times wider than it is deep, so a square of
+    /// marks does not fit on it — the old ±0.062 vertical offset alone was
+    /// taller than the stone's whole half-height. Spread along the wide axis
+    /// with a slight stagger, they sit on the stone and still read as four
+    /// separate places to stand.
     static let spawnOffsets = [
-        CGPoint(x: -0.034, y:  0.062),
-        CGPoint(x:  0.034, y:  0.062),
-        CGPoint(x: -0.034, y: -0.062),
-        CGPoint(x:  0.034, y: -0.062)
+        CGPoint(x: -0.042, y:  0.006),
+        CGPoint(x: -0.014, y: -0.006),
+        CGPoint(x:  0.014, y:  0.006),
+        CGPoint(x:  0.042, y: -0.006)
     ]
+
+    /// Radius of a floor mark, sized from the zone rather than fixed.
+    ///
+    /// A fixed 11pt looked right on a big phone and spilled off the stone on an
+    /// SE, where the ellipse is only about 35pt tall — the mark plus its offset
+    /// came to more than the whole short radius. Tied to the zone, all four fit
+    /// on every screen. The floor keeps it visible when the stone is small.
+    static func markRadius(for sceneSize: CGSize) -> CGFloat {
+        max(5, zoneRadii(for: sceneSize).height * 0.32)
+    }
 
     /// Testing knob: draw the serve zone from the first frame instead of
     /// waiting for the cake to be decorated.
@@ -118,7 +165,9 @@ nonisolated enum ServeRitual {
 @MainActor
 final class ServeRitualNode: SKNode {
 
-    private var zone = SKShapeNode(circleOfRadius: ServeRitual.zoneRadius)
+    /// Replaced in `init` with the real ellipse; this is just a placeholder so
+    /// the property is initialised before `super.init()`.
+    private var zone = SKShapeNode()
     private let zoneLabel = SKLabelNode(fontNamed: "AvenirNext-DemiBold")
 
     private let button = SKShapeNode(rectOf: CGSize(width: 190, height: 56),
@@ -151,10 +200,11 @@ final class ServeRitualNode: SKNode {
         super.init()
 
         zPosition = 2
-        zonePoint = CGPoint(x: ServeRitual.zoneUnitPosition.x * sceneSize.width,
-                            y: ServeRitual.zoneUnitPosition.y * sceneSize.height)
+        // Against the artboard, not the scene: the serve stone is painted into
+        // the background, so the circle has to follow the picture.
+        zonePoint = KitchenArt.mapPoint(ServeRitual.zoneUnitPosition, in: sceneSize)
 
-        zone = SKShapeNode(circleOfRadius: ServeRitual.zoneRadius(for: sceneSize))
+        zone = SKShapeNode(path: Self.zonePath(for: sceneSize))
         zone.position = zonePoint
         zone.lineWidth = 3
         zone.strokeColor = waiting
@@ -164,9 +214,10 @@ final class ServeRitualNode: SKNode {
         // One mark per chef. Standing on your own spot is what makes a missing
         // team-mate obvious at a glance instead of a headcount.
         for offset in ServeRitual.spawnOffsets {
-            let mark = SKShapeNode(circleOfRadius: 15)
-            mark.position = CGPoint(x: offset.x * sceneSize.width + zonePoint.x,
-                                    y: offset.y * sceneSize.height + zonePoint.y)
+            let mark = SKShapeNode(circleOfRadius: ServeRitual.markRadius(for: sceneSize))
+            let map = KitchenArt.mapRect(in: sceneSize)
+            mark.position = CGPoint(x: offset.x * map.width + zonePoint.x,
+                                    y: offset.y * map.height + zonePoint.y)
             mark.strokeColor = ink.withAlphaComponent(0.22)
             mark.fillColor = .clear
             mark.lineWidth = 1.5
@@ -181,7 +232,7 @@ final class ServeRitualNode: SKNode {
         // Inside the circle: below it the label landed inside the Table
         // station's box and painted over it.
         zoneLabel.position = CGPoint(x: zonePoint.x,
-                                     y: zonePoint.y + ServeRitual.zoneRadius(for: sceneSize) - 12)
+                                     y: zonePoint.y + ServeRitual.zoneRadii(for: sceneSize).height + 11)
         addChild(zoneLabel)
 
         // Bottom-centre. It was bottom-right, but the bar and the status line
@@ -230,6 +281,17 @@ final class ServeRitualNode: SKNode {
         isHidden = true
     }
 
+    /// The zone's outline. Rebuilt rather than resized, because an SKShapeNode
+    /// keeps whatever path it was born with — and the scene is built at the
+    /// safe-area size then resized to the view's real bounds, so "born with" is
+    /// the wrong size on the very first frame.
+    private static func zonePath(for sceneSize: CGSize) -> CGPath {
+        let r = ServeRitual.zoneRadii(for: sceneSize)
+        return CGPath(ellipseIn: CGRect(x: -r.width, y: -r.height,
+                                        width: r.width * 2, height: r.height * 2),
+                      transform: nil)
+    }
+
     required init?(coder: NSCoder) {
         fatalError("not used")
     }
@@ -237,16 +299,25 @@ final class ServeRitualNode: SKNode {
     /// The scene is built at the safe-area size and resized to the view's real
     /// bounds, so anything centred or pinned to an edge has to be told.
     func layout(for sceneSize: CGSize) {
-        zonePoint = CGPoint(x: ServeRitual.zoneUnitPosition.x * sceneSize.width,
-                            y: ServeRitual.zoneUnitPosition.y * sceneSize.height)
+        // Against the artboard, not the scene: the serve stone is painted into
+        // the background, so the circle has to follow the picture.
+        zonePoint = KitchenArt.mapPoint(ServeRitual.zoneUnitPosition, in: sceneSize)
         zone.position = zonePoint
+        zone.path = Self.zonePath(for: sceneSize)
         zoneLabel.position = CGPoint(x: zonePoint.x,
-                                     y: zonePoint.y + ServeRitual.zoneRadius(for: sceneSize) - 12)
+                                     y: zonePoint.y + ServeRitual.zoneRadii(for: sceneSize).height + 11)
 
+        let markR = ServeRitual.markRadius(for: sceneSize)
         for (mark, offset) in zip(children.filter { $0.name == "mark" },
                                   ServeRitual.spawnOffsets) {
-            mark.position = CGPoint(x: offset.x * sceneSize.width + zonePoint.x,
-                                    y: offset.y * sceneSize.height + zonePoint.y)
+            let map = KitchenArt.mapRect(in: sceneSize)
+            mark.position = CGPoint(x: offset.x * map.width + zonePoint.x,
+                                    y: offset.y * map.height + zonePoint.y)
+            // Same reason the zone's own path is rebuilt: a shape node keeps
+            // the radius it was created with.
+            (mark as? SKShapeNode)?.path = CGPath(
+                ellipseIn: CGRect(x: -markR, y: -markR, width: markR * 2, height: markR * 2),
+                transform: nil)
         }
 
         let buttonPoint = CGPoint(x: sceneSize.width * 0.5, y: 76)

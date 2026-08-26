@@ -37,7 +37,7 @@ struct ContentView: View {
         GeometryReader { geometry in
 
             if let previewStation {
-                ChoppingStationView(
+                StationPage(
                     station: previewStation,
                     session: previewSession,
                     inventory: inventory,
@@ -173,6 +173,14 @@ struct ContentView: View {
                         inventory.pickUp(HeldIngredient(id: "strawberries", name: "Strawberries"))
                         inventory.pickUp(HeldUtensil(id: "knife", name: "Knife"))
                         previewStation = .chopping
+                    }
+
+                    menuButton(title: "Bowl station (final art)") {
+                        // Arrive holding one of the four things a bowl wants,
+                        // so the drop button has something to say.
+                        inventory.pickUp(HeldIngredient(id: "cream", name: "Cream"))
+                        inventory.pickUp(HeldUtensil(id: "whisk", name: "Whisk"))
+                        previewStation = .bowl2
                     }
 
                     menuButton(title: "Garbage throw") {

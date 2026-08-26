@@ -280,11 +280,11 @@ private struct ChefCardsPreview: View {
     var body: some View {
         ForestRockScreen(
             title: banner,
-            rockAsset: "ui-waiting-rock",
-            rockLeft: WaitingRoomLayout.rockLeft,
-            rockWidth: WaitingRoomLayout.rockWidth,
-            rockAspect: WaitingRoomLayout.rockAspect,
-            rockTop: WaitingRoomLayout.rockTop,
+            rockAsset: WaitingRoomLayout.fallbackRockAsset,
+            rockLeft: WaitingRoomLayout.fallbackRockLeft,
+            rockWidth: WaitingRoomLayout.fallbackRockWidth,
+            rockAspect: WaitingRoomLayout.fallbackRockAspect,
+            rockTop: WaitingRoomLayout.fallbackRockTop,
             titleTop: WaitingRoomLayout.titleTop,
             showNext: false,
             onBack: {},

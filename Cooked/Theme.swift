@@ -7,6 +7,19 @@
 
 import SwiftUI
 
+extension Color {
+    /// Builds a colour from the hex the design file quotes, so a value can be
+    /// copied straight across from Figma without converting it to decimals by
+    /// hand — which is where the palette drifts apart.
+    init(hex: UInt32) {
+        self.init(
+            red:   Double((hex >> 16) & 0xFF) / 255,
+            green: Double((hex >>  8) & 0xFF) / 255,
+            blue:  Double( hex        & 0xFF) / 255
+        )
+    }
+}
+
 enum AppTheme {
     // Palette pulled from the Cook or Cooked logo
     static let cream = Color(red: 0.97, green: 0.92, blue: 0.83)
@@ -17,6 +30,28 @@ enum AppTheme {
     /// "this one is done". Taken from the basil in `PlayerPalette` so a green
     /// tick never fights the green chef sitting next to it.
     static let basil = Color(red: 0.24, green: 0.55, blue: 0.32)
+
+    /// The warm off-white the forest screens letter their signs and titles in.
+    /// Darker than `cream`, which is the logo's white and reads as glare
+    /// against the woodland art.
+    static let sand = Color(hex: 0xE1CBB0)
+
+    /// "stone - dark grey" in the design file. The outline on the lettering,
+    /// and darker than `ink` reads on the rock.
+    static let stone = Color(hex: 0x272320)
+
+    /// The chef's own typed name: a warm brown lettering over the darker
+    /// brown it is outlined in.
+    static let bark = Color(hex: 0x645144)
+    static let barkDeep = Color(hex: 0x493A2F)
+
+    /// The warm off-white the rock's panels are filled with — the name field,
+    /// the character counter, the chosen player-count tile.
+    static let paper = Color(hex: 0xFFEBD8)
+
+    /// A shade lighter than `paper`, and what the lettering on the *dark*
+    /// panels is set in: the unchosen tiles, the signposts.
+    static let parchment = Color(hex: 0xFFEFDF)
 
     // Warm kitchen backdrop used across screens
     static var background: some View {

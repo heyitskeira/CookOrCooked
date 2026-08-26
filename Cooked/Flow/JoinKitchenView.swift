@@ -2,13 +2,17 @@
 //  JoinKitchenView.swift
 //  Cooked
 //
-//  Browse the local Wi-Fi for hosted kitchens, then prove you're in the room
-//  by typing the code off the host's screen.
+//  "Active kitchens" — browse the local Wi-Fi for hosted kitchens, pick one,
+//  then prove you're in the room by typing the code off the host's screen.
 //
 //  The list shows every kitchen the radio can find. It deliberately does NOT
 //  filter by distance: ranging each advertiser before drawing its row would
 //  need one UWB session per kitchen, and only one can run at a time. The
-//  distance check happens after you tap.
+//  distance check happens after you tap JOIN.
+//
+//  The forest, rock, title and signposts come from `ForestRockScreen`; only the
+//  list in the middle is this screen's. Layout numbers below are read straight
+//  off the Figma frame (874 x 402) — see Tools/figma.py.
 //
 
 import SwiftUI
@@ -17,42 +21,53 @@ struct JoinKitchenView: View {
     @Environment(\.dismiss) private var dismiss
 
     @StateObject private var session = KitchenSession(role: .guest)
+    @State private var selected: DiscoveredKitchen?
     @State private var pendingKitchen: DiscoveredKitchen?
-    @State private var typedCode = ""
     @State private var showLobby = false
 
+    // MARK: - Layout
+
+    private enum Layout {
+        static let titleTop = 107.0 / 402
+
+        // "Frame 12" — the window the rows scroll inside. The design draws five
+        // rows in a box only tall enough for four and a bit, which is what
+        // makes it read as a list rather than a fixed set of buttons.
+        static let listLeft = 306.0 / 874
+        static let listTop = 144.0 / 402
+        static let listWidth = 258.0 / 874
+        static let listHeight = 175.0 / 402
+
+        // Rows sit 41 apart and stand 31.9 tall, so 9.1 of that is the gap.
+        static let rowWidth = 250.7 / 874
+        static let rowAspect = 31.9 / 250.7
+        static let rowGap = 9.1 / 402
+        static let rowTextSize = 18.23 / 874
+        static let rowTextInset = 12.8 / 874
+    }
+
+    // MARK: - Body
+
     var body: some View {
-        ZStack {
-            AppTheme.background
-
-            VStack(spacing: 24) {
-                Text("Join a kitchen")
-                    .font(.system(size: 32, weight: .heavy, design: .rounded))
-                    .foregroundStyle(AppTheme.ink)
-
-                if let errorText = session.errorText {
-                    Text(errorText)
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundStyle(AppTheme.cream)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 9)
-                        .background(Capsule().fill(AppTheme.tomato))
-                }
-
-                content
+        ForestRockScreen(
+            title: "ACTIVE KITCHENS",
+            titleTop: Layout.titleTop,
+            nextAsset: "ui-join-button",
+            nextLabel: "Join",
+            // The JOIN signpost exports whole, post and all, unlike the trimmed
+            // NEXT one — it runs off the bottom of the screen by design.
+            nextAspect: 201.0 / 160.0,
+            nextEnabled: selected != nil,
+            onBack: {
+                session.leave()
+                dismiss()
+            },
+            onNext: {
+                guard let selected else { return }
+                pendingKitchen = selected
             }
-            .frame(maxWidth: 560)
-            .padding(.horizontal, 40)
-            .padding(.vertical, 32)
-
-            VStack {
-                HStack {
-                    backButton
-                    Spacer()
-                }
-                Spacer()
-            }
-            .padding(24)
+        ) { w, h in
+            listWindow(w: w, h: h)
         }
         .onAppear { session.startBrowsing() }
         // This screen owns the session, so it also owns shutting it down. On
@@ -61,8 +76,11 @@ struct JoinKitchenView: View {
         // this whole view disappears a frame later. Without this the fresh
         // NWBrowser would keep running for the rest of the launch.
         .onDisappear { session.leave() }
-        .sheet(item: $pendingKitchen) { kitchen in
-            codeEntry(for: kitchen)
+        .fullScreenCover(item: $pendingKitchen) { kitchen in
+            KitchenCodeView(kitchenName: KitchenTitle.readable(kitchen.name)) { code in
+                pendingKitchen = nil
+                session.join(kitchen: kitchen, code: code)
+            }
         }
         .onChange(of: session.phase) { _, phase in
             // Only ever raise the cover from here. A constant binding would
@@ -80,190 +98,107 @@ struct JoinKitchenView: View {
         // already thrown away — every one of them untappable, with nothing to
         // refresh them. Coming back from the lobby starts the search again.
         .onChange(of: showLobby) { _, isShowing in
-            if !isShowing { session.startBrowsing() }
-        }
-    }
-
-    // MARK: Body states
-
-    @ViewBuilder
-    private var content: some View {
-        switch session.phase {
-        case .verifying(let status):
-            waiting(status)
-        case .rejected(let reason):
-            rejected(reason)
-        case .hostLeft:
-            rejected(nil, text: "That kitchen has closed")
-        default:
-            if session.discovered.isEmpty { searching } else { roomList }
-        }
-    }
-
-    private var searching: some View {
-        VStack(spacing: 20) {
-            ProgressView().controlSize(.large).tint(AppTheme.ink)
-            Text("Looking for kitchens on your Wi-Fi…")
-                .font(.system(size: 17, weight: .semibold, design: .rounded))
-                .foregroundStyle(AppTheme.ink.opacity(0.6))
-            Text("You and the host must be on the same network")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundStyle(AppTheme.ink.opacity(0.4))
-        }
-        .frame(maxHeight: .infinity)
-    }
-
-    private func waiting(_ status: String) -> some View {
-        VStack(spacing: 20) {
-            ProgressView().controlSize(.large).tint(AppTheme.ink)
-            Text(status)
-                .font(.system(size: 19, weight: .bold, design: .rounded))
-                .foregroundStyle(AppTheme.ink)
-        }
-        .frame(maxHeight: .infinity)
-    }
-
-    private func rejected(_ reason: JoinRejection?, text: String? = nil) -> some View {
-        VStack(spacing: 20) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 40, weight: .bold))
-                .foregroundStyle(AppTheme.tomato)
-
-            Text(text ?? reason?.message ?? "Couldn't join")
-                .font(.system(size: 19, weight: .bold, design: .rounded))
-                .foregroundStyle(AppTheme.ink)
-                .multilineTextAlignment(.center)
-
-            PillButton(title: "Try again",
-                       style: .outlined(background: AppTheme.cream, foreground: AppTheme.ink)) {
+            if !isShowing {
+                selected = nil
                 session.startBrowsing()
             }
-            .frame(maxWidth: 300)
         }
-        .frame(maxHeight: .infinity)
+        // A kitchen that goes off the air while highlighted would otherwise
+        // leave JOIN live against a room that is no longer there.
+        .onChange(of: session.discovered) { _, kitchens in
+            if let selected, !kitchens.contains(where: { $0.id == selected.id }) {
+                self.selected = nil
+            }
+        }
     }
 
-    private var roomList: some View {
-        ScrollView {
-            VStack(spacing: 14) {
+    // MARK: - The list, and what stands in for it
+
+    private func listWindow(w: CGFloat, h: CGFloat) -> some View {
+        Group {
+            switch session.phase {
+            case .verifying(let status):
+                message(status, w: w)
+            case .rejected(let reason):
+                message(reason.message, w: w, retry: true)
+            case .hostLeft:
+                message("That kitchen has closed", w: w, retry: true)
+            default:
+                if session.discovered.isEmpty {
+                    message("Looking for kitchens on your Wi-Fi…", w: w)
+                } else {
+                    rows(w: w, h: h)
+                }
+            }
+        }
+        .frame(width: w * Layout.listWidth, height: h * Layout.listHeight)
+        .position(x: w * (Layout.listLeft + Layout.listWidth / 2),
+                  y: h * (Layout.listTop + Layout.listHeight / 2))
+    }
+
+    private func rows(w: CGFloat, h: CGFloat) -> some View {
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: h * Layout.rowGap) {
                 ForEach(session.discovered) { kitchen in
-                    RoomRow(name: kitchen.name) {
-                        typedCode = ""
-                        pendingKitchen = kitchen
-                    }
+                    row(kitchen, w: w)
                 }
             }
-            .padding(.vertical, 4)
         }
+        // The rows are wider than the window's inner edge by a couple of
+        // points in the design, so the window does not clip them.
+        .scrollClipDisabled(false)
     }
 
-    // MARK: Code entry
+    private func row(_ kitchen: DiscoveredKitchen, w: CGFloat) -> some View {
+        let isSelected = selected?.id == kitchen.id
+        let rowW = w * Layout.rowWidth
 
-    private func codeEntry(for kitchen: DiscoveredKitchen) -> some View {
-        VStack(spacing: 26) {
-            Text(kitchen.name)
-                .font(.system(size: 26, weight: .heavy, design: .rounded))
-                .foregroundStyle(AppTheme.ink)
-
-            Text("Type the four digits shown on the host's screen")
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundStyle(AppTheme.ink.opacity(0.55))
-                .multilineTextAlignment(.center)
-
-            TextField("0000", text: $typedCode)
-                .keyboardType(.numberPad)
-                .textContentType(.oneTimeCode)
-                .multilineTextAlignment(.center)
-                .font(.system(size: 44, weight: .heavy, design: .rounded))
-                .frame(maxWidth: 260)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(AppTheme.cream)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(AppTheme.ink, lineWidth: 3)
-                )
-                .onChange(of: typedCode) { _, new in
-                    typedCode = String(new.filter(\.isNumber).prefix(4))
-                }
-
-            PillButton(title: "Join",
-                       style: .filled(background: AppTheme.tomato, foreground: AppTheme.cream)) {
-                guard let code = RoomCode(typedCode) else { return }
-                pendingKitchen = nil
-                session.join(kitchen: kitchen, code: code)
-            }
-            .frame(maxWidth: 300)
-            .opacity(RoomCode(typedCode) == nil ? 0.5 : 1)
-            .disabled(RoomCode(typedCode) == nil)
-        }
-        .padding(40)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AppTheme.background)
-    }
-
-    private var backButton: some View {
-        Button {
-            session.leave()
-            dismiss()
+        return Button {
+            selected = kitchen
         } label: {
-            Image(systemName: "chevron.left")
-                .font(.system(size: 24, weight: .bold))
-                .foregroundStyle(AppTheme.ink)
-                .frame(width: 56, height: 56)
-                .background(Circle().fill(AppTheme.cream))
-                .overlay(Circle().stroke(AppTheme.ink, lineWidth: 3))
-                .shadow(color: AppTheme.ink.opacity(0.25), radius: 4, x: 0, y: 3)
-        }
-        .accessibilityLabel("Back")
-    }
-}
-
-// MARK: - Room Row
-
-private struct RoomRow: View {
-    let name: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                Image(systemName: "frying.pan.fill")
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(AppTheme.cream)
-                    .frame(width: 48, height: 48)
-                    .background(Circle().fill(AppTheme.tomato))
-                    .overlay(Circle().stroke(AppTheme.ink, lineWidth: 3))
-
-                Text(name)
-                    .font(.system(size: 21, weight: .bold, design: .rounded))
-                    .foregroundStyle(AppTheme.ink)
-                    .lineLimit(1)
-
-                Spacer()
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(AppTheme.ink.opacity(0.5))
-            }
-            .padding(.horizontal, 16)
-            .frame(height: 68)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(AppTheme.cream)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(AppTheme.ink, lineWidth: 3)
-            )
-            .shadow(color: AppTheme.ink.opacity(0.15), radius: 4, x: 0, y: 3)
+            RockArt.image(isSelected ? "ui-kitchen-list-choosen"
+                                     : "ui-kitchen-list-unchoosen",
+                          width: rowW,
+                          aspect: Layout.rowAspect)
+                .overlay(alignment: .leading) {
+                    // The chosen row is the dark one, so its name flips to the
+                    // light lettering to stay readable on it.
+                    Text(KitchenTitle.readable(kitchen.name))
+                        .font(.system(size: w * Layout.rowTextSize, weight: .medium).width(.condensed))
+                        .foregroundStyle(isSelected ? AppTheme.parchment : AppTheme.barkDeep)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .padding(.leading, w * Layout.rowTextInset)
+                        .padding(.trailing, w * Layout.rowTextInset * 0.5)
+                        .allowsHitTesting(false)
+                }
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(KitchenTitle.readable(kitchen.name))
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
+
+    /// Searching, verifying, and the failure states all read as one line of
+    /// lettering in the same window the rows use.
+    private func message(_ text: String, w: CGFloat, retry: Bool = false) -> some View {
+        VStack(spacing: w * 0.012) {
+            Text(text)
+                .font(.system(size: w * Layout.rowTextSize, weight: .medium).width(.condensed))
+                .foregroundStyle(AppTheme.barkDeep)
+                .multilineTextAlignment(.center)
+
+            if retry {
+                Button("Try again") { session.startBrowsing() }
+                    .font(.system(size: w * Layout.rowTextSize, weight: .heavy).width(.condensed))
+                    .foregroundStyle(AppTheme.bark)
+                    .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
 }
 
-#Preview {
+#Preview("Active kitchens", traits: .landscapeLeft) {
     JoinKitchenView()
 }

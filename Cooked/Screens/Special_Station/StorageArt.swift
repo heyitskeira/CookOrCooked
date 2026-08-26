@@ -111,9 +111,16 @@ enum StorageArt {
     // 874x402 screen, not the stretched one the station pages use.
 
     /// Height of the item the carousel is centred on.
-    static let focusedHeight: CGFloat = 165
+    ///
+    /// Down from 165. At that size the focused item's slot and its neighbours'
+    /// actually overlapped — 1.35 times the height is a wide box, and three of
+    /// them did not fit between the two chevrons — so the outer edge of one
+    /// item sat on top of the next. Taking about 15% off both heights opens a
+    /// real gap between the three slots and still leaves the middle one plainly
+    /// the biggest thing on the shelf.
+    static let focusedHeight: CGFloat = 140
     /// Height of the items either side of it.
-    static let unfocusedHeight: CGFloat = 84
+    static let unfocusedHeight: CGFloat = 72
 
     // MARK: Seating a prep on a shelf
 

@@ -61,7 +61,7 @@ struct NumberOfPlayersView: View {
         ) { w, h in
             tileRow(w: w, h: h)
         }
-        .fullScreenCover(isPresented: $showWaitingRoom) {
+        .instantFullScreenCover(isPresented: $showWaitingRoom) {
             WaitingRoomView(session: session)
         }
     }

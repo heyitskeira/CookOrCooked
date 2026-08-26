@@ -270,7 +270,7 @@ struct KitchenGameView: View {
             // kitchen — a fullScreenCover isolates it from this view's own
             // ZStack entirely, so nothing behind it (the map, the checklist,
             // the station labels) can show through.
-            .fullScreenCover(isPresented: Binding(
+            .instantFullScreenCover(isPresented: Binding(
                 get: { activeStation.map(StationPage.exists(for:)) ?? false },
                 set: { showing in if !showing { activeStation = nil } }
             )) {

@@ -53,7 +53,13 @@ struct DrawerView: View {
     /// Centres of the two columns, and the box one item gets.
     private static let leftColumnX: CGFloat = 340
     private static let rightColumnX: CGFloat = 592
-    private static let slotSize = CGSize(width: 200, height: 96)
+    /// Down from 200x96, by the same ~15% the carousel items came down by, so
+    /// the three tabs stay in proportion with each other.
+    ///
+    /// Safe to change on its own: the slot is bottom-aligned onto the shelf
+    /// surface and the seating offset is a fraction of this height, so a
+    /// shorter slot still rests its prep on the plank rather than floating it.
+    private static let slotSize = CGSize(width: 172, height: 82)
 
     /// Slot index → the box its contents are drawn in, resting on the plank.
     private static func slotFrame(_ index: Int) -> CGRect {

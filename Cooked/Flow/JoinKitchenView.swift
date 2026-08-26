@@ -76,7 +76,7 @@ struct JoinKitchenView: View {
         // this whole view disappears a frame later. Without this the fresh
         // NWBrowser would keep running for the rest of the launch.
         .onDisappear { session.leave() }
-        .fullScreenCover(item: $pendingKitchen) { kitchen in
+        .instantFullScreenCover(item: $pendingKitchen) { kitchen in
             KitchenCodeView(kitchenName: KitchenTitle.readable(kitchen.name)) { code in
                 pendingKitchen = nil
                 session.join(kitchen: kitchen, code: code)
@@ -90,7 +90,7 @@ struct JoinKitchenView: View {
             // through to the recipe book or the game.
             if phase == .lobby || phase == .briefing || phase == .playing { showLobby = true }
         }
-        .fullScreenCover(isPresented: $showLobby) {
+        .instantFullScreenCover(isPresented: $showLobby) {
             WaitingRoomView(session: session)
         }
         // `onAppear` fires once, so backing out of a kitchen used to leave this

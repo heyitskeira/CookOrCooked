@@ -37,7 +37,7 @@ struct WaitingRoomView: View {
 
     var body: some View {
         ForestRockScreen(
-            title: session.kitchenName.uppercased(),
+            title: KitchenTitle.banner(session.kitchenName),
             rockAsset: "ui-waiting-rock",
             rockLeft: Layout.rockLeft,
             rockWidth: Layout.rockWidth,

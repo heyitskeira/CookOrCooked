@@ -244,9 +244,15 @@ private struct ChefCardsPreview: View {
     let seats: Int
     var roomCode = "6348"
 
+    /// Derived, not typed — the same way the real screen gets it, so the
+    /// preview cannot drift from the thing it is previewing.
+    private var banner: String {
+        KitchenTitle.banner(players.first(where: \.isHost)?.name ?? "")
+    }
+
     var body: some View {
         ForestRockScreen(
-            title: "BAMBI'S KITCHEN",
+            title: banner,
             rockAsset: "ui-waiting-rock",
             rockLeft: WaitingRoomLayout.rockLeft,
             rockWidth: WaitingRoomLayout.rockWidth,

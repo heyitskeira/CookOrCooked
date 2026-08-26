@@ -113,8 +113,8 @@ struct ResumeKitchenView: View {
 
     private var headline: String {
         switch saved {
-        case .host:  return "Reopening \(saved.kitchenName)"
-        case .guest: return "Getting you back into \(saved.kitchenName)"
+        case .host:  return "Reopening \(KitchenTitle.readable(saved.kitchenName))"
+        case .guest: return "Getting you back into \(KitchenTitle.readable(saved.kitchenName))"
         }
     }
 

@@ -14,8 +14,6 @@ import SwiftUI
 struct NumberOfPlayersView: View {
     @Environment(\.dismiss) private var dismiss
 
-    let kitchenName: String
-
     // Owned here so it survives the transition into the waiting room. The
     // session is inert until `startHosting()` — creating it advertises nothing.
     @StateObject private var session = KitchenSession(role: .host)
@@ -26,8 +24,7 @@ struct NumberOfPlayersView: View {
     private let options = [2, 3, 4]
 
     /// Lets a preview show the chosen state without tapping anything.
-    init(kitchenName: String, preselected: Int? = nil) {
-        self.kitchenName = kitchenName
+    init(preselected: Int? = nil) {
         _selected = State(initialValue: preselected)
     }
 
@@ -114,19 +111,21 @@ struct NumberOfPlayersView: View {
 
     private func start() {
         guard let selected else { return }
-        session.configure(kitchenName: kitchenName, maxPlayers: selected)
+        // The kitchen takes the host's own chef name — see `KitchenTitle`.
+        session.configure(kitchenName: PlayerIdentityStore.current.name,
+                          maxPlayers: selected)
         showWaitingRoom = true
     }
 }
 
 #Preview("Nothing picked — NEXT dimmed", traits: .landscapeLeft) {
-    NumberOfPlayersView(kitchenName: "Test Kitchen")
+    NumberOfPlayersView()
 }
 
 #Preview("Two chefs picked", traits: .landscapeLeft) {
-    NumberOfPlayersView(kitchenName: "Test Kitchen", preselected: 2)
+    NumberOfPlayersView(preselected: 2)
 }
 
 #Preview("Four chefs picked", traits: .landscapeLeft) {
-    NumberOfPlayersView(kitchenName: "Test Kitchen", preselected: 4)
+    NumberOfPlayersView(preselected: 4)
 }

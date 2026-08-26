@@ -77,7 +77,7 @@ struct JoinKitchenView: View {
         // NWBrowser would keep running for the rest of the launch.
         .onDisappear { session.leave() }
         .fullScreenCover(item: $pendingKitchen) { kitchen in
-            KitchenCodeView(kitchenName: kitchen.name) { code in
+            KitchenCodeView(kitchenName: KitchenTitle.readable(kitchen.name)) { code in
                 pendingKitchen = nil
                 session.join(kitchen: kitchen, code: code)
             }
@@ -163,7 +163,7 @@ struct JoinKitchenView: View {
                 .overlay(alignment: .leading) {
                     // The chosen row is the dark one, so its name flips to the
                     // light lettering to stay readable on it.
-                    Text(kitchen.name)
+                    Text(KitchenTitle.readable(kitchen.name))
                         .font(.system(size: w * Layout.rowTextSize, weight: .medium).width(.condensed))
                         .foregroundStyle(isSelected ? AppTheme.parchment : AppTheme.barkDeep)
                         .lineLimit(1)
@@ -174,7 +174,7 @@ struct JoinKitchenView: View {
                 }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(kitchen.name)
+        .accessibilityLabel(KitchenTitle.readable(kitchen.name))
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 

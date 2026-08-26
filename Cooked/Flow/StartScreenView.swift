@@ -170,7 +170,7 @@ private struct ChefNameStep: View {
         PlayerNameView { named = true }
             .fullScreenCover(isPresented: $named) {
                 switch route {
-                case .create: KitchenNameView()
+                case .create: NumberOfPlayersView()
                 case .join:   JoinKitchenView()
                 }
             }

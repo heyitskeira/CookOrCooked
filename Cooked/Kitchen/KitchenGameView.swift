@@ -72,7 +72,10 @@ struct KitchenGameView: View {
                     .transition(.opacity)
                 }
 
-                if let station = activeStation {
+                // Chopping gets its own full-screen page (see the
+                // .fullScreenCover below) — every other station still uses
+                // this small popup over the dimmed kitchen.
+                if let station = activeStation, station != .chopping {
                     StationPopupView(
                         station: station,
                         session: session,
@@ -230,6 +233,21 @@ struct KitchenGameView: View {
                     showRecipe = false
                     openRecipeStep = nil
                 }
+            }
+            // Chopping's illustrated screen is a full page, not a card over
+            // the kitchen — a fullScreenCover isolates it from this view's
+            // own ZStack entirely, so nothing behind it (the map, the
+            // checklist, the station labels) can show through.
+            .fullScreenCover(isPresented: Binding(
+                get: { activeStation == .chopping },
+                set: { showing in if !showing { activeStation = nil } }
+            )) {
+                ChoppingStationView(
+                    station: .chopping,
+                    session: session,
+                    inventory: inventory,
+                    onClose: { activeStation = nil }
+                )
             }
         }
     }

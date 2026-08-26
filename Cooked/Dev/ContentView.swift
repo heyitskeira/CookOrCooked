@@ -29,10 +29,21 @@ struct ContentView: View {
     @StateObject private var pantry = StoragePantry()
     @StateObject private var drawerBox = DrawerBox()
 
+    // Which illustrated station scene is open, if any.
+    @State private var previewStation: StationID?
+    @StateObject private var previewSession = KitchenSession(role: .host)
+
     var body: some View {
         GeometryReader { geometry in
- 
-            if let scene = activeScene {
+
+            if let previewStation {
+                ChoppingStationView(
+                    station: previewStation,
+                    session: previewSession,
+                    inventory: inventory,
+                    onClose: { self.previewStation = nil }
+                )
+            } else if let scene = activeScene {
                 // A screen is open, so show it with a Back button on top.
                 ZStack(alignment: .topLeading) {
  
@@ -158,6 +169,12 @@ struct ContentView: View {
                         activeScene = makeScene(DecorateScreen(size: size))
                     }
      
+                    menuButton(title: "Chopping station (final art)") {
+                        inventory.pickUp(HeldIngredient(id: "strawberries", name: "Strawberries"))
+                        inventory.pickUp(HeldUtensil(id: "knife", name: "Knife"))
+                        previewStation = .chopping
+                    }
+
                     menuButton(title: "Garbage throw") {
                         activeName = "Garbage throw"
                         activeScene = makeScene(GarbageThrowPreviewScene(size: size))

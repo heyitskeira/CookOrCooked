@@ -61,10 +61,16 @@ final class KitchenScene: SKScene {
     /// Finished prep sitting on a station when playing offline (no session).
     private var localOutput: [StationID: String] = [:]
 
-    /// What's been dropped at a station — from the snapshot if networked, else
-    /// the local store.
+    /// What's been dropped at a station — the host's own live table if
+    /// networked, else the local store. Goes through `session.depositedFoods`
+    /// rather than `session.snapshot` directly: the snapshot only refreshes
+    /// on the 10Hz tick `startCooking()` starts, which needs two connected
+    /// players, so a solo/preview session would show a deposit as having
+    /// never happened — not late, permanently invisible — and every gate
+    /// that reads this (including `beginAction`'s own re-check) would keep
+    /// refusing even once the ingredient is really there.
     private func depositedFoods(at station: StationID) -> Set<String> {
-        if let session { return Set(session.snapshot.depositedFoods(at: station)) }
+        if let session { return Set(session.depositedFoods(at: station)) }
         return localDeposited[station] ?? []
     }
 

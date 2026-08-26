@@ -3,14 +3,18 @@
 //  Cooked
 //
 //  The storage room: one cupboard with three tabs — the utensils on their
-//  hooks, the ingredients on their shelf, and the storage rack where a chef
-//  parks a half-finished prep.
+//  hooks, the ingredients on their shelf, and the storage rack out back where
+//  a chef parks a half-finished prep.
 //
 //  The rack used to be its own station out on the map (the "drawer"). It is a
 //  tab here now because all three are the same errand — you go to the pantry to
 //  fetch or stash something — and one pin on the map is easier to read than two
 //  that look alike. `StationID.drawer` still exists behind this, unchanged, so
 //  nothing about how shelves sync had to move.
+//
+//  Laid out against the storage artboard (see `StorageCanvas`), which is the
+//  plain 874x402 screen — not the stretched one the illustrated station pages
+//  use.
 //
 
 import SwiftUI
@@ -29,24 +33,11 @@ struct StorageView: View {
     /// Called when the chef leaves storage (closes the overlay).
     var onClose: () -> Void
 
-    /// The three shelves of the cupboard, in the order the design shows them.
-    private enum Tab: String, CaseIterable, Identifiable {
-        case utensils, ingredients, rack
-        var id: String { rawValue }
-        var title: String {
-            switch self {
-            case .utensils:    return "Utensils"
-            case .ingredients: return "Ingredients"
-            case .rack:        return "Storage Rack"
-            }
-        }
-    }
-
-    @State private var tab: Tab = .utensils
+    @State private var tab: StorageTab = .utensils
     /// One cursor per carousel, so switching tabs within a visit keeps your
-    /// place. Leaving the pantry tears the view down and resets all three —
-    /// walk back in and you are on Utensils at the first item again. Hoist
-    /// these to `KitchenGameView` if that ever needs to persist.
+    /// place. Leaving the pantry tears the view down and resets both — walk
+    /// back in and you are on Utensils at the first item again. Hoist these to
+    /// `KitchenGameView` if that ever needs to persist.
     @State private var utensilIndex = 0
     @State private var ingredientIndex = 0
     @State private var ingredientDraw: IngredientDraw? = nil   // result popup
@@ -60,17 +51,27 @@ struct StorageView: View {
         session?.utensilsLeft(id) ?? pantry.remaining(id)
     }
 
-    var body: some View {
-        ZStack {
-            backdrop
+    /// The countdown on the cupboard clock. A solo/test-menu session never
+    /// starts the 10Hz snapshot tick, so it reads the full round there — a
+    /// still dial rather than a wrong one.
+    private var timeRemaining: TimeInterval {
+        session?.snapshot.timeRemaining ?? Recipe.timeLimit
+    }
 
-            VStack(spacing: 12) {
-                header
-                content
-                Spacer(minLength: 0)
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                backdrop(geo)
+                content(geo)
+
+                // Above the shelves so a tap near the top edge reaches the tab
+                // pill rather than the carousel behind it.
+                StorageHands(inventory: inventory, geo: geo)
+                StorageBackButton(geo: geo, action: onClose)
+                StorageTabBar(tab: $tab, geo: geo)
+                StorageClock(timeRemaining: timeRemaining, geo: geo)
             }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 18)
+            .frame(width: geo.size.width, height: geo.size.height)
         }
         .ignoresSafeArea()
         .overlay { resultPopup }
@@ -116,111 +117,52 @@ struct StorageView: View {
 
     // MARK: Backdrop
 
-    /// The cupboard interior behind the utensils and ingredients; the rack tab
-    /// brings its own woodland backing, so it gets a plain wash instead.
+    /// The cupboard interior behind the utensils and ingredients; the rack is
+    /// out in the clearing, so that tab gets the forest instead.
     @ViewBuilder
-    private var backdrop: some View {
-        if tab != .rack, let art = UIImage(named: "bg-storage-cupboard") {
-            Image(uiImage: art)
-                .resizable()
-                .scaledToFill()
-                .clipped()
-        } else {
-            AppTheme.background
-        }
-    }
-
-    // MARK: Header (back + tabs + clock)
-
-    private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Button(action: onClose) {
-                Image(systemName: "arrowshape.turn.up.backward.fill")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(AppTheme.ink)
-                    .frame(width: 46, height: 46)
-                    .background(Circle().fill(AppTheme.cream))
-                    .overlay(Circle().stroke(AppTheme.ink, lineWidth: 3))
-            }
-            .accessibilityLabel("Leave storage")
-
-            Spacer(minLength: 0)
-            tabBar
-            Spacer(minLength: 0)
-
-            // Balances the back button so the tab row sits centred. The clock
-            // itself is drawn by the scene underneath, not here.
-            Color.clear.frame(width: 46, height: 46)
-        }
-    }
-
-    private var tabBar: some View {
-        HStack(spacing: 6) {
-            ForEach(Tab.allCases) { entry in
-                let selected = entry == tab
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { tab = entry }
-                } label: {
-                    Text(entry.title)
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundStyle(selected ? AppTheme.ink : AppTheme.cream)
-                        .padding(.horizontal, 16)
-                        .frame(height: 32)
-                        .background(
-                            Capsule().fill(selected ? AppTheme.cream : Color.black.opacity(0.35))
-                        )
-                        .overlay(
-                            Capsule().stroke(AppTheme.ink.opacity(selected ? 1 : 0.35),
-                                             lineWidth: selected ? 2.5 : 1.5)
-                        )
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(selected ? [.isSelected] : [])
+    private func backdrop(_ geo: GeometryProxy) -> some View {
+        Group {
+            if let art = UIImage(named: tab == .rack ? "forest-background" : "ui-storage-bg") {
+                Image(uiImage: art)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                AppTheme.background
             }
         }
-        .padding(4)
-        .background(Capsule().fill(Color.black.opacity(0.18)))
+        .frame(width: geo.size.width, height: geo.size.height)
+        .clipped()
     }
 
     // MARK: Content per tab
 
     @ViewBuilder
-    private var content: some View {
+    private func content(_ geo: GeometryProxy) -> some View {
         switch tab {
         case .utensils:
-            VStack(spacing: 6) {
-                StorageCarousel(items: utensilItems, index: $utensilIndex) { item in
-                    guard let ut = Storage.utensils.first(where: { $0.id == item.id }) else { return }
-                    takeUtensil(ut)
-                }
-                caption("Select your Utensils")
+            StorageCarousel(items: utensilItems, index: $utensilIndex, geo: geo) { item in
+                guard let ut = Storage.utensils.first(where: { $0.id == item.id }) else { return }
+                guard !item.isInUse else { outOfStock = item.name; return }
+                takeUtensil(ut)
             }
+            StorageCaption(text: "Select your Utensils", geo: geo)
 
         case .ingredients:
-            VStack(spacing: 6) {
-                StorageCarousel(items: ingredientItems, index: $ingredientIndex) { item in
-                    pickIngredient(item.id)
-                }
-                caption("Select your Ingredients")
+            StorageCarousel(items: ingredientItems, index: $ingredientIndex, geo: geo) { item in
+                pickIngredient(item.id)
             }
+            StorageCaption(text: "Select your Ingredients", geo: geo)
 
         case .rack:
-            // The old drawer screen, unchanged in behaviour — same shelves,
-            // same host round-trip, same refusal messages. Only the way in
-            // changed.
+            // The rack, same shelves and the same host round-trip as when it
+            // was its own screen. Only the way in changed — and the chrome,
+            // which this view already drew before handing over.
             DrawerView(inventory: inventory,
                        box: drawerBox,
                        session: session,
                        showsCloseButton: false,
                        onClose: onClose)
         }
-    }
-
-    private func caption(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 15, weight: .bold, design: .rounded))
-            .foregroundStyle(AppTheme.cream)
-            .shadow(color: .black.opacity(0.6), radius: 3, x: 0, y: 1)
     }
 
     // MARK: Rows
@@ -233,7 +175,7 @@ struct StorageView: View {
                 name: ut.name,
                 detail: left > 0 ? "\(left) left" : "In use",
                 // Someone else is holding the last one — show the dark
-                // silhouette rather than letting the chef tap a dead item.
+                // silhouette the designer drew for exactly this.
                 isInUse: left <= 0
             )
         }
@@ -341,9 +283,27 @@ struct StorageView: View {
     }
 }
 
-#Preview {
+#Preview("Storage — empty hands", traits: .landscapeLeft) {
     StorageView(inventory: PlayerInventory(),
                 pantry: StoragePantry(),
                 drawerBox: DrawerBox(),
+                onClose: {})
+}
+
+#Preview("Storage — knife gone, rack loaded", traits: .landscapeLeft) {
+    StorageView(inventory: PlayerInventory(ingredient: HeldIngredient(id: "whippedCream",
+                                                                     name: "Whipped cream",
+                                                                     isPrep: true),
+                                           utensil: HeldUtensil(id: "whisk", name: "Whisk")),
+                // Knife stock at zero: the carousel should show the dark
+                // silhouette for it and nothing else.
+                pantry: StoragePantry(utensilStock: ["knife": 0, "sifter": 1,
+                                                     "whisk": 1, "mixer": 1, "pan": 1]),
+                drawerBox: DrawerBox(slots: [
+                    DrawerItem(foodID: "siftedFlour", name: "Sifted flour"),
+                    DrawerItem(foodID: "choppedStrawberries", name: "Chopped strawberries"),
+                    DrawerItem(foodID: "bakedBase", name: "Baked base"),
+                    nil
+                ]),
                 onClose: {})
 }

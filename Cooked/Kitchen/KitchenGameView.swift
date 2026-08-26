@@ -40,6 +40,17 @@ struct KitchenGameView: View {
     // Raised when a chef carrying rot taps anywhere but the bin.
     @State private var showRottenAlert = false
 
+    /// True while a screen of our own sits over the kitchen map.
+    ///
+    /// The overlays below are all at the default `zIndex`, so they stack in
+    /// declaration order — anything declared after them paints on top, whether
+    /// or not that makes sense. The recipe sign is the one thing that is, so it
+    /// asks here first. The alerts, the paused/closed screens and the end
+    /// results carry explicit `zIndex` values instead and don't need this.
+    private var mapIsCovered: Bool {
+        showStorage || activeStation != nil || finishedPrep != nil
+    }
+
     var body: some View {
         GeometryReader { geo in
             ZStack {
@@ -198,11 +209,20 @@ struct KitchenGameView: View {
                         .zIndex(4)
                 }
 
-                // Trigger: top-left, head chef only, hidden while already open.
+                // Trigger: top-left, head chef only, hidden while already open
+                // or while anything covers the map.
+                //
                 // Placed by measurement rather than by padding — it is the
                 // hanging sign from the reference art, and it has to line up
                 // with the tree it hangs from in the background image.
-                if session.isHeadChef && !showRecipe {
+                //
+                // `mapIsCovered` is not optional tidiness. This is declared
+                // last in the ZStack and carries no `zIndex`, so it draws over
+                // every default-z overlay above it — and it hangs in the same
+                // top-left corner the storage room puts its back plaque in.
+                // The head chef opening storage saw the plaque replaced by the
+                // recipe sign, with no way out of the room.
+                if session.isHeadChef && !showRecipe && !mapIsCovered {
                     let frame = KitchenArt.bookFrame(in: geo.size)
                     Button {
                         withAnimation(.easeInOut(duration: 0.15)) { showRecipe = true }

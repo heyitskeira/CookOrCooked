@@ -233,7 +233,7 @@ nonisolated enum NetMessage: Codable {
     /// "I'm dropping this ingredient into the station in front of me."
     case deposit(station: String, foodID: String)
     /// "Put what I'm holding on this drawer shelf." The host checks the shelf is
-    /// free and the temperature is right; the chef keeps the item until it says
+    /// free — any food fits any shelf; the chef keeps the item until it says
     /// yes, so a refusal can never eat an ingredient.
     case requestStoreDrawer(slot: Int, item: DrawerItem)
     /// "Give me what's on this drawer shelf."
@@ -260,8 +260,8 @@ nonisolated enum NetMessage: Codable {
     case utensilOut(id: String)
     /// The item is on the shelf now — the chef may empty their hand.
     case drawerStored(slot: Int)
-    /// The shelf refused it: already occupied, or the wrong temperature. The
-    /// chef keeps holding what they had.
+    /// The shelf refused it — it is already occupied, which is the only reason
+    /// left. The chef keeps holding what they had.
     case drawerRefused(slot: Int, reason: String)
     /// The shelf's contents, now in the chef's hand. nil means someone emptied
     /// it first.

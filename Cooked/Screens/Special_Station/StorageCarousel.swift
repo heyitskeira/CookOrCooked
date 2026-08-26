@@ -51,14 +51,28 @@ struct StorageCarousel: View {
     private static let rightArrowCentre = CGPoint(x: 704, y: 197)
     private static let arrowSide: CGFloat = 52
 
+    /// How far a finger must travel before it counts as looking along the
+    /// shelf rather than choosing what it landed on. Device points, not
+    /// artboard units — this is about fingers, which are the same size on
+    /// every screen.
+    private static let flickDistance: CGFloat = 12
+
     var body: some View {
         ZStack {
-            slot(offset: -1)
-            slot(offset: 1)
-            // Drawn last so the focused item overlaps its neighbours rather
-            // than being clipped by them — they sit close enough to touch on
-            // the widest art (the strawberry punnet).
-            slot(offset: 0)
+            // One view per *item*, not one per slot.
+            //
+            // The shelf used to be three fixed boxes that swapped their
+            // contents when the index moved. Nothing could animate that: as far
+            // as SwiftUI was concerned the middle box had simply been handed a
+            // different picture, so it cut to it. That was the blink — the
+            // items never travelled, they were re-dealt.
+            //
+            // Keyed by position in `items`, each drawing keeps its identity
+            // across a step and only its x and its size change. Those are both
+            // animatable, so the same tap now slides the shelf along.
+            ForEach(window, id: \.self) { position in
+                itemView(at: position)
+            }
 
             arrow(.backward)
             arrow(.forward)
@@ -67,8 +81,21 @@ struct StorageCarousel: View {
         .contentShape(Rectangle())
         // Flick as well as tap the chevrons — the arrows are the discoverable
         // control, this is the one you end up using.
-        .gesture(
-            DragGesture(minimumDistance: 24)
+        //
+        // `highPriorityGesture`, not `gesture`, and 12 rather than 24. Between
+        // them those two were why the shelf felt like it grabbed things: an
+        // ordinary `.gesture` sits *below* the item buttons, so any flick the
+        // drag hadn't claimed yet went to whichever item was under the finger
+        // and picked it up. With a 24-point threshold that was every flick
+        // shorter than 24 points, which is most of them — the chef swiped to
+        // look along the shelf and walked away holding something.
+        //
+        // Now the drag outranks the buttons and claims the touch after half
+        // that distance. A tap is still a tap: a drag with a minimum distance
+        // never starts from a finger that doesn't travel, so it cannot eat the
+        // deliberate press it is protecting.
+        .highPriorityGesture(
+            DragGesture(minimumDistance: Self.flickDistance)
                 .onEnded { value in
                     if value.translation.width < 0 { step(1) }
                     else if value.translation.width > 0 { step(-1) }
@@ -80,37 +107,59 @@ struct StorageCarousel: View {
 
     // MARK: Pieces
 
-    @ViewBuilder
-    private func slot(offset: Int) -> some View {
-        let position = index + offset
-        if items.indices.contains(position) {
-            let item = items[position]
-            let isFocus = offset == 0
-            let height = isFocus ? StorageArt.focusedHeight : StorageArt.unfocusedHeight
-            let width = height * 1.35   // a generous box; the art fits inside it
-            let x = Self.focusCentreX + CGFloat(offset) * Self.neighbourOffsetX
+    /// The items close enough to the middle to be worth drawing.
+    ///
+    /// One wider than you can see, on each side. The extra pair is what stops
+    /// the item arriving from off-shelf appearing out of nowhere at the
+    /// neighbour position: it already exists, parked out of sight, so a step
+    /// slides it in rather than fading it up.
+    private var window: [Int] {
+        items.indices.filter { abs($0 - index) <= 2 }
+    }
 
-            Button {
-                if isFocus {
-                    // In-use items are still tappable on purpose. Dimming and
-                    // then doing nothing leaves a chef prodding a dead item
-                    // with no idea why; the caller answers with "someone else
-                    // has it", which is the question they are actually asking.
-                    onPick(item)
-                } else {
-                    step(offset)
-                }
-            } label: {
-                artwork(for: item, isFocus: isFocus)
+    @ViewBuilder
+    private func itemView(at position: Int) -> some View {
+        let item = items[position]
+        let steps = position - index          // -2 … +2, and it is a CGFloat below
+        let distance = CGFloat(steps)
+        let isFocus = steps == 0
+        // Only the middle item and its two neighbours are on the shelf. The
+        // outer pair is staged off it — invisible, and deliberately not
+        // tappable, or a chef could pick something they cannot see.
+        let isOnShelf = abs(steps) <= 1
+
+        let height = isFocus ? StorageArt.focusedHeight : StorageArt.unfocusedHeight
+        let width = height * 1.35   // a generous box; the art fits inside it
+        let x = Self.focusCentreX + distance * Self.neighbourOffsetX
+
+        Button {
+            if isFocus {
+                // In-use items are still tappable on purpose. Dimming and
+                // then doing nothing leaves a chef prodding a dead item
+                // with no idea why; the caller answers with "someone else
+                // has it", which is the question they are actually asking.
+                onPick(item)
+            } else {
+                step(steps)
             }
-            .buttonStyle(.plain)
-            .storagePlaced(x - width / 2, Self.rowCentreY - height / 2, width, height, in: geo)
-            // The design carries no item names — the drawing is the label,
-            // and stock is told by full colour versus silhouette. VoiceOver
-            // has neither, so it gets both spelled out here.
-            .accessibilityLabel(isFocus ? item.name : "Show \(item.name)")
-            .accessibilityValue(item.detail ?? "")
+        } label: {
+            artwork(for: item, isFocus: isFocus)
         }
+        .buttonStyle(.plain)
+        .storagePlaced(x - width / 2, Self.rowCentreY - height / 2, width, height, in: geo)
+        .opacity(isOnShelf ? 1 : 0)
+        .allowsHitTesting(isOnShelf)
+        // The focused item rides over its neighbours rather than being clipped
+        // by them. Ordering the `ForEach` cannot do this — it runs in position
+        // order, and which position is focused keeps changing — so depth is
+        // stated per item instead.
+        .zIndex(-abs(Double(steps)))
+        // The design carries no item names — the drawing is the label,
+        // and stock is told by full colour versus silhouette. VoiceOver
+        // has neither, so it gets both spelled out here.
+        .accessibilityLabel(isFocus ? item.name : "Show \(item.name)")
+        .accessibilityValue(item.detail ?? "")
+        .accessibilityHidden(!isOnShelf)
     }
 
     @ViewBuilder
@@ -136,7 +185,11 @@ struct StorageCarousel: View {
                 radius: (isFocus ? 9 : 14) * unit,
                 x: 0,
                 y: (isFocus ? 7 : 4) * unit)
-        .animation(.spring(response: 0.32, dampingFraction: 0.8), value: index)
+        // No `.animation(value: index)` here any more. It was the only
+        // animation on the shelf back when the slots were fixed, which is why
+        // it was written against `index` — but a nested animation on the label
+        // now fights the one `step` runs around the whole change, and the two
+        // together are what made the size pop while the position slid.
     }
 
     private enum Direction { case backward, forward }
@@ -169,8 +222,18 @@ struct StorageCarousel: View {
     private func step(_ delta: Int) {
         let next = index + delta
         guard items.indices.contains(next) else { return }
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) { index = next }
+        withAnimation(Self.slide) { index = next }
     }
+
+    /// How the shelf moves.
+    ///
+    /// `.smooth` is a spring with no bounce, which is what a shelf of heavy
+    /// objects should do — the old `.spring(dampingFraction: 0.8)` overshot
+    /// slightly, and on an item the size of the focused one that reads as a
+    /// wobble rather than as weight. Springs also retarget cleanly when they
+    /// are interrupted, so holding down a chevron runs the items along in one
+    /// continuous movement instead of restarting the animation per tap.
+    private static let slide: Animation = .smooth(duration: 0.32)
 
     /// Both catalogues are static today, so this never fires. It exists because
     /// without it a list that shrank below `index` would strand the carousel:

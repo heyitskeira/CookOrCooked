@@ -63,11 +63,15 @@ final class HandsNode: SKNode {
 
     // MARK: Setup
 
-    /// - Parameter colorIndex: the player's slot, which picks the animal. There
-    ///   is no avatar on `Player` yet, so this is the same handle the spawn
-    ///   marks and chef colours already key off — meaning a chef's paws stay
-    ///   the same on every device, for free.
-    init(screenSize: CGSize, colorIndex: Int = 0) {
+    /// - Parameter pawAsset: which animal's paws to draw, already resolved.
+    ///
+    ///   Handed in rather than worked out here. This used to take a
+    ///   `colorIndex` and run it through a paw list of its own, which was a
+    ///   second, different answer to a question `ChefCast` was already
+    ///   answering for the lobby cards — so a chef was a raccoon on the card
+    ///   and a rabbit in the kitchen. `KitchenSession.localPawAsset` is now the
+    ///   one place that decides, and this just draws what it is told.
+    init(screenSize: CGSize, pawAsset: String = ChefCast.Animal.squirrel.paw) {
         leftHand = SKNode()
         rightHand = SKNode()
         super.init()
@@ -76,7 +80,7 @@ final class HandsNode: SKNode {
 
         // Behind the hand anchors, so an item always sits on top of the paw
         // holding it.
-        if let art = UIImage(named: Self.pawName(for: colorIndex)) {
+        if let art = UIImage(named: pawAsset) {
             let sprite = SKSpriteNode(texture: SKTexture(image: art))
             sprite.zPosition = -1
             addChild(sprite)
@@ -102,16 +106,6 @@ final class HandsNode: SKNode {
 
     required init?(coder: NSCoder) {
         fatalError("not used")
-    }
-
-    /// One animal per player slot. Six paws, so a fifth player would wrap —
-    /// which cannot happen while a kitchen holds four.
-    private static let paws = [
-        "paw-squirrel", "paw-raccoon", "paw-rabbit", "paw-fox", "paw-bear", "paw-beaver"
-    ]
-
-    private static func pawName(for colorIndex: Int) -> String {
-        paws[((colorIndex % paws.count) + paws.count) % paws.count]
     }
 
     /// The pair sits in the bottom-right, so this *does* depend on the screen

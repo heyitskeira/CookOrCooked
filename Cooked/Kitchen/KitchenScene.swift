@@ -207,8 +207,12 @@ final class KitchenScene: SKScene {
         // of hands would be orphaned on screen forever.
         guard hands == nil else { return }
 
+        // Offline there is no room and no roster, so the seed the room code
+        // would give is absent — seat 0 of an empty code, which is stable, is
+        // the right answer for a game nobody else is watching.
         let made = HandsNode(screenSize: size,
-                             colorIndex: session?.localPlayer?.colorIndex ?? 0)
+                             pawAsset: session?.localPawAsset
+                                       ?? ChefCast.paw(seat: 0, roomCode: ""))
         addChild(made)
         hands = made
         refreshHands()

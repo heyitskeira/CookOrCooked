@@ -191,10 +191,14 @@ struct StorageHands: View {
 
     @ObservedObject var inventory: PlayerInventory
     let geo: GeometryProxy
+    /// Whose paws these are — see `StationHands.pawAsset`. The pantry is the
+    /// third place a chef looks down at their own hands, and it was drawing the
+    /// same shared pair as everywhere else.
+    var pawAsset: String = ChefCast.Animal.squirrel.paw
 
     var body: some View {
         ZStack {
-            if let art = UIImage(named: "hands") {
+            if let art = UIImage(named: pawAsset) ?? UIImage(named: "hands") {
                 Image(uiImage: art).resizable().scaledToFit()
                     .storagePlaced(697, 305, 169, 97, alignment: .bottom, in: geo)
             }

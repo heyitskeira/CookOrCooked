@@ -66,7 +66,8 @@ struct StorageView: View {
 
                 // Above the shelves so a tap near the top edge reaches the tab
                 // pill rather than the carousel behind it.
-                StorageHands(inventory: inventory, geo: geo)
+                StorageHands(inventory: inventory, geo: geo,
+                             pawAsset: session?.localPawAsset ?? ChefCast.paw(seat: 0, roomCode: ""))
                 StorageBackButton(geo: geo, action: onClose)
                 StorageTabBar(tab: $tab, geo: geo)
                 StorageClock(timeRemaining: timeRemaining, geo: geo)

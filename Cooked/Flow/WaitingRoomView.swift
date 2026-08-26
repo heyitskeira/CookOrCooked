@@ -95,7 +95,7 @@ struct WaitingRoomView: View {
                 break
             }
         }
-        .fullScreenCover(isPresented: $showGame) {
+        .instantFullScreenCover(isPresented: $showGame) {
             GameFlowView(session: session)
                 .ignoresSafeArea()
         }

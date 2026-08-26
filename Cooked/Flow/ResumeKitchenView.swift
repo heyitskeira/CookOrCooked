@@ -104,7 +104,7 @@ struct ResumeKitchenView: View {
                 break
             }
         }
-        .fullScreenCover(isPresented: $showKitchen) {
+        .instantFullScreenCover(isPresented: $showKitchen) {
             WaitingRoomView(session: session)
         }
     }

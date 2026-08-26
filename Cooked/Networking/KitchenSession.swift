@@ -138,6 +138,26 @@ final class KitchenSession: ObservableObject {
     var canStart: Bool { isHost && connectedCount >= 2 && phase == .lobby }
     var localPlayer: Player? { players.first { $0.id == localPlayerID } }
 
+    /// Which animal a chef is wearing in this kitchen, and the paws to match.
+    ///
+    /// Both go through `ChefCast`, which is seeded from the room code — so every
+    /// device in the room independently computes the same answer without it ever
+    /// having to be sent. The seat is `colorIndex`, which the host does hand out
+    /// and which the snapshot carries, so it is agreed before this is asked.
+    ///
+    /// Here rather than at each call site because there are five screens that
+    /// draw a chef, and every one of them getting the seed from somewhere
+    /// slightly different is how they drifted apart in the first place.
+    func animal(for player: Player) -> ChefCast.Animal {
+        ChefCast.animal(seat: player.colorIndex, roomCode: roomCode.digits)
+    }
+
+    /// The local chef's paws. Falls back to seat 0 before the roster has
+    /// arrived — a guest's very first frames — rather than drawing nothing.
+    var localPawAsset: String {
+        ChefCast.paw(seat: localPlayer?.colorIndex ?? 0, roomCode: roomCode.digits)
+    }
+
     /// Every chef who is actually here has pressed Ready, and there are enough
     /// of them to cook. This is what starts the match — no host button, because
     /// "all ready" is already unanimous consent and asking for one more tap
@@ -1709,6 +1729,23 @@ final class KitchenSession: ObservableObject {
 
         case .joinAccepted(let player, let roomID, let resume):
             hostPeer = peer
+            // Adopt the host's four digits.
+            //
+            // Until this line a guest's `roomCode` was the one *it* invented in
+            // `init` — every session mints a fresh ticket, host or not, and a
+            // guest's is never the room it is joining. The code the chef typed
+            // lived separately in `submittedCode`, used for the handshake and
+            // then dropped.
+            //
+            // So anything seeded from `roomCode` was seeded from a different
+            // number on every device. That is why the chef animals disagreed:
+            // `ChefCast` is deterministic and was working perfectly, on four
+            // different seeds. The lobby was also showing each guest a room
+            // code that was not the room's.
+            //
+            // Safe here and not before: the host has just accepted this code,
+            // which is what proves it is theirs.
+            if let submittedCode { roomCode = submittedCode }
             // We're in — stop counting down to giving up, and stop hunting.
             rejoinTask?.cancel()
             rejoinTask = nil

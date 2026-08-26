@@ -86,20 +86,20 @@ struct StartScreenView: View {
                 .padding(24)
             }
             .frame(width: w, height: h)
-            .fullScreenCover(item: $route) { route in
+            .instantFullScreenCover(item: $route) { route in
                 ChefNameStep(route: route)
             }
             // Presented from `resumable` being set rather than a flag, so it
             // raises itself the moment the launch check finds a live kitchen —
             // which is the whole promise: reopen the app, land back in the room.
-            .fullScreenCover(item: $resumable) { saved in
+            .instantFullScreenCover(item: $resumable) { saved in
                 ResumeKitchenView(saved: saved)
             }
             // Full screen rather than a sheet: settings is a painted forest
             // scene composed edge to edge, and a sheet would letterbox it into
             // a card with someone else's chrome around it. It also matches how
             // every other screen in the flow is presented.
-            .fullScreenCover(isPresented: $showSettings) {
+            .instantFullScreenCover(isPresented: $showSettings) {
                 SettingsView()
             }
         }
@@ -172,7 +172,7 @@ private struct ChefNameStep: View {
 
     var body: some View {
         PlayerNameView { named = true }
-            .fullScreenCover(isPresented: $named) {
+            .instantFullScreenCover(isPresented: $named) {
                 switch route {
                 case .create: NumberOfPlayersView()
                 case .join:   JoinKitchenView()

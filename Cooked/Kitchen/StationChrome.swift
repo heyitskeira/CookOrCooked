@@ -321,20 +321,35 @@ extension ActionMotion {
         case .whisk:     return "Swipe in circles"
         case .sift:      return StationMinigame.hasMotionSensor ? "Shake to sift" : "Hold to sift"
         case .breakEgg:  return StationMinigame.hasMotionSensor ? "Flick down to crack" : "Tap to crack"
-        case .mix:       return "Hold to mix"
+        case .mix:       return "Swipe in circles, anticlockwise"
         case .melt:      return "Blow"
         case .hold:      return "Hold to work"
         case .throwAway: return "Throw it away"
         }
     }
 
+    /// Whether that glyph has to be flipped to point the right way round.
+    ///
+    /// The finger-circle art is drawn clockwise, which is the way whisking
+    /// happens to be illustrated and the way mixing must *not* go. Mirroring it
+    /// is the only way to show the required direction with the art that exists;
+    /// a properly drawn anticlockwise glyph would be better, and this goes away
+    /// the day one is exported.
+    var instructionArtIsMirrored: Bool {
+        self == .mix
+    }
+
     var instructionArtName: String {
         switch self {
         case .chop:      return "overlay-chop"
         case .whisk:     return "overlay-whisk"
-        // Best guess at the mixing gesture (the phone swirled round like a
-        // spoon); the mixing station isn't built yet to confirm it.
-        case .mix:       return "overlay-mix"
+        // Mixing borrows whisking's glyph rather than using `overlay-mix`.
+        // That one draws the *phone* being swirled round like a spoon — a
+        // guess made before the station was built, and the mix-dough reference
+        // frames settle it: they show a finger circling inside the bowl, the
+        // same gesture whisking uses. `overlay-mix` is now art for a mechanic
+        // that doesn't exist, so it is left unused rather than shown.
+        case .mix:       return "overlay-whisk"
         case .sift:      return "overlay-sift"
         case .melt:      return "overlay-melt"
         case .breakEgg:  return "overlay-break-egg"
@@ -401,6 +416,9 @@ struct StationInstructionOverlay: View {
                     .resizable()
                     .scaledToFit()
                     .foregroundStyle(StationPalette.cream)
+                    // Flipped, not rotated: rotating a circular arrow moves
+                    // where it starts without changing which way it goes.
+                    .scaleEffect(x: motion.instructionArtIsMirrored ? -1 : 1, y: 1)
             } else {
                 Image(systemName: "hand.tap.fill")
                     .font(.system(size: 60, weight: .bold))

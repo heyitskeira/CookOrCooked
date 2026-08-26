@@ -585,18 +585,9 @@ private struct BowlContents: View {
         .onChange(of: working) { _, now in phase = now != nil }
     }
 
-    /// How a food looks lying loose in the bowl, falling back to how it looks
-    /// in hand.
-    ///
-    /// Most things have a second image for this — a bag of sugar in the paw is
-    /// a pile of sugar once it's tipped in, and every *prep*'s own artwork is
-    /// a bowl with the prep in it, which would draw a bowl inside the bowl if
-    /// used here. The suffix is a naming convention rather than a table, so
-    /// giving a new ingredient its loose look means adding the imageset and
-    /// nothing else.
-    private func bowlArt(_ food: String) -> UIImage? {
-        FoodArt.art("\(food)-loose") ?? FoodArt.art(food)
-    }
+    /// How a food looks lying loose in the bowl rather than in the thing that
+    /// carries it — see `FoodArt.looseArt`.
+    private func bowlArt(_ food: String) -> UIImage? { FoodArt.looseArt(food) }
 }
 
 // MARK: - Doing the action

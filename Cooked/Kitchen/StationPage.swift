@@ -30,7 +30,7 @@ struct StationPage: View {
     /// main-actor state that `View` conformance implies.
     nonisolated static func exists(for station: StationID) -> Bool {
         switch station {
-        case .chopping, .bowl1, .bowl2, .mixing, .ovenServe: return true
+        case .chopping, .bowl1, .bowl2, .mixing, .stove, .ovenServe: return true
         default: return false
         }
     }
@@ -62,6 +62,9 @@ struct StationPage: View {
         case .chopping:
             ChoppingStationView(station: station, session: session,
                                 inventory: inventory, onClose: onClose)
+        case .stove:
+            StoveStationView(station: station, session: session,
+                             inventory: inventory, onClose: onClose)
         // Mixing joins the bowls rather than getting a page of its own. The
         // mix-dough reference frames are drawn on the same wooden bowl on the
         // same slab — they are even captioned BOWL STATION — and the page is

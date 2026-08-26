@@ -20,6 +20,7 @@
 import SwiftUI
 import Combine
 import CoreMotion
+import AVFoundation
 
 @MainActor
 final class StationMinigame: ObservableObject {
@@ -42,6 +43,12 @@ final class StationMinigame: ObservableObject {
     /// which clears itself.
     @Published private(set) var notice: String?
     @Published private(set) var beat: Beat = .crack
+    /// Melting only: how high the fire is, 0 (cold) to 1 (burning). The stove's
+    /// temperature meter is this number.
+    @Published private(set) var fireLevel: Double = 0.4
+    /// Melting only: the fire is above the safe band and the butter is
+    /// spoiling.
+    @Published private(set) var isTooHot = false
 
     var onFinish: (() -> Void)?
 
@@ -80,6 +87,23 @@ final class StationMinigame: ObservableObject {
     private let flickCooldown = 0.7
     /// How much of the bar the crack itself is worth; the rest is opening.
     private let crackShare = 0.35
+    /// Melting, all from `BlowMeltOverlay`. The fire climbs on its own and
+    /// blowing pushes it back down, so the chef has to keep nudging it rather
+    /// than blowing flat out — progress only accrues inside the safe band, and
+    /// above it the butter starts to spoil what's already done.
+    ///
+    /// Decibels, where 0 is the loudest possible and -60 near silence.
+    private let blowNeeded = -22.0
+    private let fireRiseSpeed = 0.30
+    private let fireDropSpeed = 0.75
+    /// The band the butter melts in. Shared, because the stove's thermometer
+    /// has to point at exactly this stretch of its own colours — a gauge whose
+    /// safe-looking zone isn't the safe zone is worse than no gauge.
+    static let safeBand = 0.25...0.60
+    private var safeLow: Double { Self.safeBand.lowerBound }
+    private var safeHigh: Double { Self.safeBand.upperBound }
+    private let burnDrainSpeed = 0.4
+
     /// How far the fingers must pull apart, as a pinch-out factor.
     ///
     /// The overlay measured this in points (130pt of extra gap), because it
@@ -115,6 +139,14 @@ final class StationMinigame: ObservableObject {
     private var secondsSinceFlick = 999.0
     private var spreadSoFar = 0.0
 
+    /// What the microphone is hearing, in decibels.
+    private var loudness = -60.0
+    private var recorder: AVAudioRecorder?
+    /// Set once `stop()` has run, so a permission answer arriving after the
+    /// chef has walked away doesn't start a recorder — and doesn't duck the
+    /// music with nothing left alive to un-duck it.
+    private var isFinishedWithMic = false
+
     private let motionManager = CMMotionManager()
     private var timer: Timer?
     private var lastFrame: CFTimeInterval = 0
@@ -145,7 +177,7 @@ final class StationMinigame: ObservableObject {
         // the longer job, and mixing four things into dough should not take
         // less work than melting one pat of butter.
         case .mix:       amountNeeded = 7.0
-        case .melt:      amountNeeded = 3.0
+        case .melt:      amountNeeded = 6.0    // BlowMeltOverlay: seconds in the safe band
         // Here for completeness — the chopping page still counts its own taps
         // in `ChoppingStationView.registerChopTap`, at this same 7.
         case .chop:      amountNeeded = 7.0
@@ -179,6 +211,7 @@ final class StationMinigame: ObservableObject {
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
         startReadingMotion()
+        if motion == .melt { startListening() }
     }
 
     /// Stops the clock and the sensors. Always call this on the way out:
@@ -189,6 +222,50 @@ final class StationMinigame: ObservableObject {
         timer = nil
         motionManager.stopDeviceMotionUpdates()
         isWorking = false
+        guard motion == .melt else { return }
+        isFinishedWithMic = true
+        recorder?.stop()
+        recorder = nil
+        // Not `setActive(false)`: that switches the whole app's audio off and
+        // the music never comes back. `Music` owns the session — it puts the
+        // category back and un-ducks. (The same mistake is written up in
+        // `BlowMeltOverlay.cleanUp`.)
+        Music.shared.didFinishWithMicrophone()
+    }
+
+    // MARK: Listening for a breath
+
+    private func startListening() {
+        // The permission alert sits on top of a running clock, so the answer
+        // can easily arrive after the round has ended or the chef has left.
+        AVAudioApplication.requestRecordPermission { granted in
+            guard granted else { return }
+            Task { @MainActor in self.beginRecording() }
+        }
+    }
+
+    private func beginRecording() {
+        guard !isFinishedWithMic else { return }
+
+        // Duck the music first: the speaker is loud enough to register on this
+        // screen's own microphone, which would melt the butter with nobody
+        // breathing on the phone.
+        Music.shared.willUseMicrophone()
+
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker])
+        try? session.setActive(true)
+
+        // The audio is never kept, so it records to a throwaway path — only
+        // the metering is wanted.
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatAppleLossless),
+            AVSampleRateKey: 44100.0,
+            AVNumberOfChannelsKey: 1
+        ]
+        recorder = try? AVAudioRecorder(url: URL(fileURLWithPath: "/dev/null"), settings: settings)
+        recorder?.isMeteringEnabled = true
+        recorder?.record()
     }
 
     private func startReadingMotion() {
@@ -308,7 +385,11 @@ final class StationMinigame: ObservableObject {
         guard dt > 0 else { return }
 
         switch motion {
-        case .hold, .melt, .throwAway:
+        // Both sides of the merge took a motion out of this line: mixing went
+        // to the circling branch, melting to its own `blow`. Keeping either
+        // side's version alone would quietly leave the other one a
+        // press-and-hold.
+        case .hold, .throwAway:
             isWorking = isPressing
             if isWorking { amountDone += dt }
 
@@ -339,6 +420,9 @@ final class StationMinigame: ObservableObject {
                 isWorking = isPressing
             }
 
+        case .melt:
+            blow(dt)
+
         case .chop:
             isWorking = false   // taps drive it, not time
         }
@@ -365,6 +449,36 @@ final class StationMinigame: ObservableObject {
         // carry on going the wrong way.
         guard secondsGoingWrongWay >= wrongWayGrace, notice == nil else { return }
         say("Other way round")
+    }
+
+    /// The fire climbs by itself; a breath pushes it down. Progress only fills
+    /// while it sits in the safe band, and burns off above it.
+    private func blow(_ dt: Double) {
+        if let recorder {
+            recorder.updateMeters()
+            let reading = Double(recorder.averagePower(forChannel: 0))
+            // Eased towards the new reading so one loud frame doesn't jolt it.
+            loudness += (reading - loudness) * 0.4
+        }
+
+        // With no recorder there's no microphone to blow into — a simulator,
+        // or a chef who said no to the permission. A held finger stands in, so
+        // the station is still playable rather than burning on its own with
+        // nothing the chef can do about it.
+        let blowing = recorder == nil ? isPressing : loudness >= blowNeeded
+
+        fireLevel += (blowing ? -fireDropSpeed : fireRiseSpeed) * dt
+        fireLevel = min(1, max(0, fireLevel))
+
+        isTooHot = fireLevel > safeHigh
+        isWorking = fireLevel >= safeLow && fireLevel <= safeHigh
+
+        if isWorking {
+            amountDone += dt
+        } else if isTooHot, burnDrainSpeed > 0 {
+            // Burning, so the work already done starts to spoil.
+            amountDone = max(0, amountDone - burnDrainSpeed * dt)
+        }
     }
 
     /// Watches for one sharp jolt, then judges how hard it was.

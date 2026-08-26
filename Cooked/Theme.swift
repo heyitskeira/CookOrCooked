@@ -7,12 +7,30 @@
 
 import SwiftUI
 
+extension Color {
+    /// Builds a colour from the hex the design file quotes, so a value can be
+    /// copied straight across from Figma without converting it to decimals by
+    /// hand — which is where the palette drifts apart.
+    init(hex: UInt32) {
+        self.init(
+            red:   Double((hex >> 16) & 0xFF) / 255,
+            green: Double((hex >>  8) & 0xFF) / 255,
+            blue:  Double( hex        & 0xFF) / 255
+        )
+    }
+}
+
 enum AppTheme {
     // Palette pulled from the Cook or Cooked logo
     static let cream = Color(red: 0.97, green: 0.92, blue: 0.83)
     static let creamDeep = Color(red: 0.94, green: 0.86, blue: 0.72)
     static let tomato = Color(red: 0.91, green: 0.27, blue: 0.24)
     static let ink = Color(red: 0.13, green: 0.11, blue: 0.10)
+
+    /// The warm off-white the forest screens letter their signs and titles in.
+    /// Darker than `cream`, which is the logo's white and reads as glare
+    /// against the woodland art.
+    static let sand = Color(hex: 0xE1CBB0)
 
     // Warm kitchen backdrop used across screens
     static var background: some View {

@@ -19,6 +19,18 @@ import CoreGraphics
 nonisolated enum StationID: String, CaseIterable {
     case chopping, bowl1, bowl2, mixing, table, stove, ovenServe, storage, trash, drawer
 
+    /// The nine stations a chef can walk to. `drawer` is deliberately absent:
+    /// its shelves are now the Storage Rack tab inside the storage room, so it
+    /// is somewhere you *reach through* Storage rather than somewhere you go.
+    ///
+    /// The case itself stays on `StationID` because it is still the key the
+    /// drawer's shelves travel under in `GameSnapshot` and `RoomResume`.
+    /// Removing it would be a wire-format change for a purely visual one.
+    /// Anything drawing or walking the map wants this, not `allCases`.
+    static let mapStations: [StationID] = [
+        .chopping, .bowl1, .bowl2, .mixing, .table, .stove, .ovenServe, .storage, .trash
+    ]
+
     var displayName: String {
         switch self {
         case .chopping: return "Chopping"
@@ -34,41 +46,121 @@ nonisolated enum StationID: String, CaseIterable {
         }
     }
 
-    /// Normalised 0...1 position. Multiplied by scene size at setup so the
-    /// layout survives any screen size.
+    /// Normalised 0...1 position on the artboard, resolved through
+    /// `KitchenArt.mapPoint` so the layout survives any screen size.
     ///
-    /// Stations line the walls, the way a real kitchen does — a run of counters
-    /// along the back, the pantry and oven down the right, prep and the bin on
-    /// the left. The middle is left deliberately empty.
+    /// Every value below was measured off the reference art
+    /// (`Asset-Final/Screens/09-kitchen/screen-09-kitchen-head-chef.png`) by
+    /// locating each `station-*` sprite in the mockup, so the map matches the
+    /// design exactly rather than approximately. Stations ring a clearing with
+    /// an open middle; the pads they stand on are painted into
+    /// `bg-kitchen-clearing`, so moving a station without moving its pad will
+    /// leave it hovering on grass.
     ///
-    /// That empty floor is where the match opens and closes: chefs spawn there
+    /// This is the point the chef *walks to*, and it is deliberately the prop
+    /// itself — the oven, the bowl, the bucket — not the centre of the sprite.
+    /// Each sprite carries its name plaque off to one side, so the sprite
+    /// centre can sit a long way from the thing a chef is meant to stand at.
+    /// `artUnitOffset` carries that difference.
+    ///
+    /// That empty middle is where the match opens and closes: chefs spawn there
     /// in sight of each other, and the whole team has to come back to it to
     /// serve. See `ServeRitual`.
-    ///
-    /// The positions also clear the screen furniture the scene draws on top of
-    /// the map — the recipe checklist down the top left, the clock top right,
-    /// the chef's hands bottom left, the SERVE button bottom right.
     var unitPosition: CGPoint {
         switch self {
-        // The counter run along the back wall. Mixing sits between the bowls
-        // it draws from and the stove, so the batter never crosses the room.
-        case .chopping:  return CGPoint(x: 0.28, y: 0.86)
-        case .bowl1:     return CGPoint(x: 0.40, y: 0.86)
-        case .bowl2:     return CGPoint(x: 0.53, y: 0.86)
-        case .mixing:    return CGPoint(x: 0.65, y: 0.86)
-        case .stove:     return CGPoint(x: 0.77, y: 0.86)
-        // Right-hand wall. The drawer is the other put-things-away station, so
-        // it sits with the pantry rather than out on its own.
-        case .storage:   return CGPoint(x: 0.90, y: 0.60)
-        case .ovenServe: return CGPoint(x: 0.90, y: 0.38)
-        case .drawer:    return CGPoint(x: 0.90, y: 0.80)
-        // Left-hand wall.
-        case .table:     return CGPoint(x: 0.24, y: 0.55)
-        case .trash:     return CGPoint(x: 0.28, y: 0.30)
-        // Next to the pantry on the right, because they're the same errand:
-        // you go over there to fetch something. Added when the drawer landed —
-        // a merge left this switch a case short, which is a compile error
-        // rather than a bad position, since it must cover every StationID.
+        // The upper arc of the ring, left to right.
+        case .stove:     return CGPoint(x: 0.2819, y: 0.4979)
+        case .table:     return CGPoint(x: 0.3933, y: 0.5831)
+        case .mixing:    return CGPoint(x: 0.5120, y: 0.6426)
+        case .ovenServe: return CGPoint(x: 0.6147, y: 0.6384)
+        case .chopping:  return CGPoint(x: 0.7157, y: 0.4928)
+        // The lower arc, right to left.
+        case .bowl1:     return CGPoint(x: 0.6677, y: 0.3099)
+        case .storage:   return CGPoint(x: 0.5046, y: 0.2624)
+        case .bowl2:     return CGPoint(x: 0.3399, y: 0.2999)
+        case .trash:     return CGPoint(x: 0.0950, y: 0.1698)
+        // Never drawn — the drawer is not on the map (see `mapStations`).
+        // A value is still required because this switch must be exhaustive.
+        case .drawer:    return .zero
+        }
+    }
+
+    /// The map sprite for this station, or nil for one still waiting on art.
+    ///
+    /// Each sprite is prop *and* name plaque in a single image — which is why
+    /// the scene draws no station name of its own any more. A nil here is what
+    /// makes `KitchenScene` fall back to a labelled placeholder box.
+    var artName: String? {
+        switch self {
+        case .chopping:  return "station-chopping"
+        case .bowl1:     return "station-bowl-1"
+        case .bowl2:     return "station-bowl-2"
+        case .mixing:    return "station-mixing"
+        case .table:     return "station-assembly"
+        case .stove:     return "station-stove"
+        case .ovenServe: return "station-baking"
+        case .storage:   return "station-storage"
+        case .trash:     return "station-trash"
+        case .drawer:    return nil
+        }
+    }
+
+    /// Sprite size as a fraction of the artboard, measured from the reference.
+    ///
+    /// Fractions rather than points because the art was authored at one fixed
+    /// size. Multiplied by `KitchenArt.mapRect` — never by the raw scene — so
+    /// both axes share a scale factor and a prop keeps its proportions and its
+    /// place on the pad at any screen shape.
+    var artUnitSize: CGSize {
+        switch self {
+        case .chopping:  return CGSize(width: 0.1939, height: 0.2034)
+        case .bowl1:     return CGSize(width: 0.1733, height: 0.1337)
+        case .bowl2:     return CGSize(width: 0.1802, height: 0.1337)
+        case .mixing:    return CGSize(width: 0.1219, height: 0.1785)
+        case .table:     return CGSize(width: 0.1296, height: 0.1567)
+        case .stove:     return CGSize(width: 0.1997, height: 0.2108)
+        case .ovenServe: return CGSize(width: 0.1859, height: 0.1710)
+        case .storage:   return CGSize(width: 0.1207, height: 0.2898)
+        case .trash:     return CGSize(width: 0.1207, height: 0.1959)
+        case .drawer:    return .zero
+        }
+    }
+
+    /// Roughly how much room the prop alone takes up, ignoring its plaque.
+    ///
+    /// Only the ready/busy halo uses this. Sizing that halo to `artUnitSize`
+    /// instead would draw a ring around the name sign as well as the prop,
+    /// which reads as the sign being interactive.
+    var propUnitSize: CGSize {
+        switch self {
+        case .chopping:  return CGSize(width: 0.0931, height: 0.1525)
+        case .bowl1:     return CGSize(width: 0.0780, height: 0.1203)
+        case .bowl2:     return CGSize(width: 0.0811, height: 0.1203)
+        case .mixing:    return CGSize(width: 0.1097, height: 0.1071)
+        case .table:     return CGSize(width: 0.0803, height: 0.0862)
+        case .stove:     return CGSize(width: 0.1098, height: 0.1792)
+        case .ovenServe: return CGSize(width: 0.0744, height: 0.1625)
+        case .storage:   return CGSize(width: 0.0942, height: 0.2174)
+        case .trash:     return CGSize(width: 0.0845, height: 0.1567)
+        case .drawer:    return .zero
+        }
+    }
+
+    /// From `unitPosition` (the prop) to the centre of the sprite, as a
+    /// fraction of the artboard. This is what puts each name plaque back on the
+    /// side the reference art hangs it.
+    var artUnitOffset: CGVector {
+        switch self {
+        case .chopping:  return CGVector(dx: +0.0543, dy: +0.0000)
+        case .bowl1:     return CGVector(dx: +0.0485, dy: -0.0067)
+        case .bowl2:     return CGVector(dx: -0.0505, dy: -0.0067)
+        case .mixing:    return CGVector(dx: +0.0000, dy: +0.0393)
+        case .table:     return CGVector(dx: -0.0155, dy: +0.0345)
+        case .stove:     return CGVector(dx: -0.0399, dy: +0.0105)
+        case .ovenServe: return CGVector(dx: +0.0632, dy: +0.0000)
+        case .storage:   return CGVector(dx: +0.0000, dy: -0.0348)
+        case .trash:     return CGVector(dx: +0.0000, dy: -0.0196)
+        case .drawer:    return .zero
         }
     }
 }

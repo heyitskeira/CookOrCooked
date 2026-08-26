@@ -49,34 +49,130 @@ gesture glyphs (`11-stations/`), 11 step instruction bodies
 (`12-recipe-step-details/step-instructions/`), `ingredient-butter-unwrapped`
 and `prepared-cake-creamed`.
 
-### ⚠️ Partial — 8 (art arrived, but not as a separate asset)
+
+### 🆕 Round-2 drop — `missed in round 1/` (filed 2026-08-26)
+
+11 files arrived in a follow-up folder. **2 were exact duplicates, 9 were new.**
+The folder has been emptied and its contents filed into `Assets-By-Screen/`.
+
+| Original filename | Filed as | Verdict |
+|---|---|---|
+| `cake stand.png` | `_unused/duplicates/` | ❌ byte-identical to `utensil-cake-stand` |
+| `stove top.png` | `_unused/duplicates/` | ❌ byte-identical to `prop-stove-top` |
+| `chopping board.png` | `11-stations/props/prop-chopping-board.png` | ✅ closes `prop-chopping-board` **and** `-large` |
+| `empty wooden bowl.png` | `11-stations/props/prop-bowl-empty.png` | ✅ closes `prop-bowl-empty` |
+| `egg yolk.png` | `_shared/sprites/ingredients/ingredient-egg-yolk.png` | ➕ new, not on the audit |
+| `sugar pile.png` | `_shared/sprites/ingredients/ingredient-sugar-pile.png` | ➕ new, loose sugar (vs `-sack`) |
+| `unsifted flour.png` | `_shared/sprites/ingredients/ingredient-flour-pile.png` | ➕ new, loose flour (vs `-sack`) |
+| `sifted flour.png` | `_shared/sprites/prepared/prepared-flour-sifted.png` | ➕ new, bowl-free (vs `prepared-bowl-sifted-flour`) |
+| `unwhipped cream.png` | `_shared/sprites/prepared/prepared-cream-unwhipped.png` | ➕ new |
+| `whipped cream.png` | `_shared/sprites/prepared/prepared-cream-whipped.png` | ➕ new, bowl-free |
+| `finished cake.png` | `_shared/sprites/prepared/prepared-cake-finished.png` | ➕ new — the served shortcake |
+
+**Net effect: partial gaps drop 8 → 5. The 26 still-open gaps are unchanged —
+nothing in this drop touched them.** The map blockers (`prop-assembly-bench`,
+`station-label-plaque`) are still outstanding — see the kitchen-map audit below.
+
+> `prop-chopping-board` shipped at 1193×804 — station-screen scale. Downscale for
+> the kitchen map rather than requesting a second export.
+
+
+### 🗺️ Kitchen-map audit — `screen-09-kitchen-head-chef.png` (2026-08-26)
+
+Element-by-element pass over the map. **Only 2 assets are genuinely missing;
+`prop-serve-stone` turned out to be a false positive.**
+
+| Element on screen | Status |
+|---|---|
+| Forest clearing + 10 empty stone pads | ✅ `bg-kitchen-clearing` — pads are painted in |
+| Recipe-book button (top-left) | ✅ `btn-recipe-book` |
+| Alarm clock / timer (top-right) | ✅ `hud-timer-clock` — draw the digits on top |
+| Stove · Baking · Mixing · Chopping · Bowl 1 · Bowl 2 · Storage · Trash | ✅ `09-kitchen/map-props/station-*` — prop + plaque, one sprite each |
+| **Assembly Station** (bench + cloth) | ❌ **missing — no sprite at all** |
+| "GATHER HERE TO SERVE" stone | ⚠️ **not a missing asset** — the pad is already in `bg-kitchen-clearing` at the same pixels. Only the lettering is absent; draw it as text in `KitchenScene`. |
+| Station name plaques | ⚠️ baked into each `station-*` — standalone still needed for data-driven names |
+
+**Consequence for the `❌ Still open` list below: `prop-serve-stone` can be struck.**
+
+Refs cropped at full resolution into `_missing-refs/`:
+`prop-assembly-bench.png` (bench + plaque), `prop-assembly-bench-only.png`
+(bench alone), `station-label-plaque.png`, `prop-serve-stone.png`.
+
+> The map shows 9 stations, but `StationID` in `Game/Recipe.swift` has 10 —
+> `drawer` never appears on the map. Worth confirming that's intentional
+> (it may live inside Storage) before anyone exports art for it.
+
+
+### 📦 Round-3 drop — 53 loose PNGs at the project root (filed 2026-08-26)
+
+**30 were byte-identical to assets already filed. 18 were new, and they close
+most of what was still open.** One asset was upgraded: the loose alarm clock is
+a higher-resolution export of `hud-timer-clock` (246×270 vs 164×180), so it
+replaced the filed copy — the old one is in `_unused/duplicates` as
+`-LOWRES-superseded`.
+
+**Plaque-free map props — closes 7 gaps** → `09-kitchen/map-props/`
+
+| Was missing | Filed as | From |
+|---|---|---|
+| `prop-oven-dome` | `prop-oven-dome.png` | `oven.png` |
+| `prop-stove` | `prop-stove.png` | `stove high level.png` |
+| `prop-storage-cabinet` | `prop-storage-cabinet.png` | `image 43.png` |
+| `prop-assembly-bench` | `prop-assembly-bench.png` | `image 44.png` |
+| `prop-trash-can` | `prop-trash-can.png` | `image 45.png` |
+| `prop-mixing-table` | `prop-mixing-table.png` | `Simple Circular Illustration 1.png` |
+| `prop-chopping-board` | `11-stations/props/prop-chopping-board.png` | `chopping board.png` |
+
+`prop-chopping-board` now exists at **both** sizes the audit asked for: this new
+216×246 one for the kitchen map, and the round-2 1193×804 export renamed to
+`prop-chopping-board-large` for the station screen.
+
+**Station name plates — 10 + the blank plank** → `09-kitchen/labels/`
+
+`label-assembly-station` · `label-baking-station` · `label-bowl-station-1` ·
+`label-bowl-station-2` · `label-chopping-station` · `label-mixing-station` ·
+`label-storage` · `label-stove-station` · `label-trash` ·
+`label-gather-here-to-serve`, plus `map-props/station-label-plaque.png` (the
+blank plank, from `small wood piece.png`).
+
+> ⚠️ **These do not reproduce the map.** The blank plank is a plain rectangle;
+> the plaques baked into each `station-*.png` are a carved shape with notched
+> ends, and they are not the same art. The lettering is also tiny — 91×10 for
+> CHOPPING STATION — so filling the plank means upscaling it roughly 3.5×.
+> Template-matching the plank against the mockup gives errors of 38–55 where the
+> station sprites score 13–19, which is the measurement saying the same thing.
+>
+> So the kitchen map still draws the baked `station-*` sprites. This set is for
+> the station close-up screens, and for data-driven names once a plank that
+> matches the map plaque exists.
+
+**Consequence:** the still-open list drops to **17**. `prop-assembly-bench` was
+the last map blocker, so nothing on the kitchen map is missing art any more.
+
+### ⚠️ Partial — 5 (art arrived, but not as a separate asset)
 
 | Asset | What arrived | What's still needed |
 |---|---|---|
 | `station-label-plaque` | plaque is **attached** to each `09-kitchen/map-props/station-*` | standalone plaque, so names can be data-driven |
 | `station-name-plaque-left` | same | standalone, left-anchored |
 | `station-name-plaque-right` | same | standalone, right-anchored |
-| `prop-bowl-empty` | `station-bowl-1` / `station-bowl-2`, plaque attached | plaque-free variant for the station close-up |
-| `prop-chopping-board` | `station-chopping`, plaque attached | plaque-free, kitchen-map size |
-| `prop-chopping-board-large` | `station-chopping`, plaque attached | plaque-free, station-screen size |
 | `ivy-vine-overlay` | vines are **baked into** `panel-stone-slab-vine-1` / `-3` | standalone vine, so it can be layered anywhere |
 | `recipe-leaf-decor-set` | foliage is **baked into** each `step-card-*` | the 11 sprites separately, if they need to animate |
 
-### ❌ Still open — 26
+### ❌ Still open — 17
 
 `action-button-pair` · `action-button-pill` · `avatar-card-frame` ·
 `carousel-arrow-left` · `carousel-arrow-right` · `char-counter-pill` ·
 `char-group-all` · `icon-cutlery` · `icon-tip-bulb` · `icon-warning` ·
 `kitchen-list-row-default` · `kitchen-list-row-selected` · `name-pill` ·
 `paw-hands-holding` · `player-count-buttons` · `plus-operator-glyph` ·
-`prop-assembly-bench` · `prop-serve-stone` · `prop-skillet` ·
+`prop-skillet` ·
 `settings-slider` · `station-hanging-sign` · `step-number-chip` ·
 `step-progress-bar` · `tab-pill-active` · `tab-row` · `text-field`
 
 Almost all of it is **flow-screen interface chrome** — text fields, list rows,
-pills, sliders, tabs, arrows. The two art gaps worth flagging: the kitchen map
-shows an **ASSEMBLY STATION** bench and a **GATHER HERE TO SERVE** stone that
-the drop skipped, and the paws only ship empty-handed even though the station
+pills, sliders, tabs, arrows. The kitchen map is now fully covered — the round-3 drop delivered the
+**ASSEMBLY STATION** bench, and the paws only ship empty-handed even though the station
 screens show them **gripping a utensil**.
 
 ---
@@ -151,7 +247,7 @@ target asset. For a visual gallery open **`asset-gaps.html`** in a browser.
 | `prop-bowl-empty` | `screen-09-kitchen-head-chef.png` | `_missing-refs/prop-bowl-empty.png` | Bowl station |
 | `prop-storage-cabinet` | `screen-09-kitchen-head-chef.png` | `_missing-refs/prop-storage-cabinet.png` |  |
 | `prop-trash-can` | `screen-09-kitchen-head-chef.png` | `_missing-refs/prop-trash-can.png` | Wooden bucket |
-| `prop-serve-stone` | `screen-09-kitchen-head-chef.png` | `_missing-refs/prop-serve-stone.png` | 'GATHER HERE TO SERVE' |
+| ~~`prop-serve-stone`~~ | `screen-09-kitchen-head-chef.png` | `_missing-refs/prop-serve-stone.png` | ✅ **Resolved** — pad is already in `bg-kitchen-clearing`; only the text is needed |
 | `prop-skillet` | `screen-11-melt-butter-start.png` | `_missing-refs/prop-skillet.png` | NOT the same art as utensil-saucepan |
 | `prop-cake-stand` | `screen-11-assemble-decorate-start-a.png` | `_missing-refs/prop-cake-stand.png` | Pink pedestal |
 

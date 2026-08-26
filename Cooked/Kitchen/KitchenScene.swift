@@ -23,10 +23,10 @@ final class KitchenScene: SKScene {
     // Added (additive):
     /// The local chef's hands. Gating reads this to require the right utensil.
     var inventory: PlayerInventory?
-    /// Called when the chef reaches storage — ContentView opens the pantry.
+    /// Called when the chef reaches storage — ContentView opens the pantry,
+    /// which is where the shelves live too, as the Storage Rack tab.
     var onOpenStorage: (() -> Void)?
-    /// Called when the chef reaches the drawer — opens the 2x2 shelf overlay.
-    var onOpenDrawer: (() -> Void)?
+
     /// True while a station screen is up. SwiftUI draws its own chrome on top
     /// of the SpriteView, and nothing inside the scene can hide it — so the
     /// inventory bar would sit over the station screen showing the same two
@@ -90,8 +90,17 @@ final class KitchenScene: SKScene {
 
     private var chef = SKShapeNode(circleOfRadius: 13)
     private var remoteChefs: [String: SKShapeNode] = [:]
-    private var stationNodes: [StationID: SKShapeNode] = [:]
+    /// One container per station, parked on the prop the chef walks to. The
+    /// artwork hangs off it as a child at `artUnitOffset`, so this node stays
+    /// the single source of truth for *where a station is* no matter how far
+    /// its name plaque sticks out.
+    private var stationNodes: [StationID: SKNode] = [:]
     private var stationPoints: [StationID: CGPoint] = [:]
+    /// The "someone is working here" ring drawn behind each prop. State used to
+    /// be shown by recolouring the station box itself; a painted sprite has
+    /// nothing to recolour, so occupancy gets a halo instead. Availability
+    /// deliberately gets nothing — see `refreshStations`.
+    private var stationHighlights: [StationID: SKShapeNode] = [:]
     /// "Aya is here" caption under an occupied station. Hidden when free.
     private var stationOwnerLabels: [StationID: SKLabelNode] = [:]
     /// Last appearance rendered per station, so the per-frame refresh can skip
@@ -113,7 +122,15 @@ final class KitchenScene: SKScene {
     private var isWalking = false
     private var lastUpdate: TimeInterval = 0
 
-    /// The chef's hands, parked in the bottom corners of the map.
+    /// The painted clearing. Held onto so a resize can re-fit it.
+    private var floorArt: SKSpriteNode?
+    /// The plain slab drawn instead when the map art is missing from the
+    /// bundle. Kept for the same reason.
+    private var floorFallback: SKShapeNode?
+    /// The alarm clock the countdown is drawn into, for the same reason.
+    private var clockArt: SKSpriteNode?
+
+    /// The chef's paws, reaching up into the bottom-right of the map.
     private var hands: HandsNode?
 
     /// The serve zone, the SERVE button and the "who are we waiting on" line.
@@ -152,7 +169,6 @@ final class KitchenScene: SKScene {
     /// was the reason nothing on this screen was legible.
     private let counterColour = SKColor(red: 0.99, green: 0.98, blue: 0.96, alpha: 1)
     private let counterEdge = SKColor(red: 0.62, green: 0.55, blue: 0.45, alpha: 1)
-    private let readyColour = SKColor(red: 0.15, green: 0.55, blue: 0.30, alpha: 1)
 
     /// Station boxes. Bigger than they were — the old 84x52 could not hold
     /// "Chopping" at a legible size on a phone.
@@ -191,7 +207,8 @@ final class KitchenScene: SKScene {
         // of hands would be orphaned on screen forever.
         guard hands == nil else { return }
 
-        let made = HandsNode(screenSize: size)
+        let made = HandsNode(screenSize: size,
+                             colorIndex: session?.localPlayer?.colorIndex ?? 0)
         addChild(made)
         hands = made
         refreshHands()
@@ -230,6 +247,57 @@ final class KitchenScene: SKScene {
         serveNode?.layout(for: size)
         flash?.size = size
         flash?.position = CGPoint(x: size.width / 2, y: size.height / 2)
+        layoutMap()
+    }
+
+    /// Re-place everything measured against the artboard.
+    ///
+    /// The map used to be built once and left alone, which was survivable while
+    /// it was a plain slab. It is not survivable now: `serveNode` relays itself
+    /// on resize, so leaving `stationPoints` at the old size would have the two
+    /// disagreeing about where the middle of the room is — and the background
+    /// would stop covering, showing bare colour at the edges.
+    private func layoutMap() {
+        guard size.width > 0, size.height > 0 else { return }
+        let rect = KitchenArt.mapRect(in: size)
+
+        floorArt?.size = rect.size
+        floorArt?.position = CGPoint(x: rect.midX, y: rect.midY)
+
+        for id in StationID.mapStations {
+            let point = KitchenArt.mapPoint(id.unitPosition, in: size)
+            stationPoints[id] = point
+            stationNodes[id]?.position = point
+
+            guard id.artName != nil else { continue }
+            let footprint = KitchenArt.mapSize(id.propUnitSize, in: size)
+            if let sprite = stationNodes[id]?.children.compactMap({ $0 as? SKSpriteNode }).first {
+                sprite.size = KitchenArt.mapSize(id.artUnitSize, in: size)
+                sprite.position = CGPoint(x: id.artUnitOffset.dx * rect.width,
+                                          y: id.artUnitOffset.dy * rect.height)
+            }
+            stationOwnerLabels[id]?.position = CGPoint(x: 0, y: -footprint.height / 2 - 11)
+            // An SKShapeNode has no resizable size — the path has to be
+            // rebuilt, or the halo keeps the radius it was born with. The scene
+            // is built at the safe-area size and resized a moment later, so
+            // "born with" means wrong from the very first frame.
+            stationHighlights[id]?.path = Self.haloPath(for: footprint)
+        }
+
+        // The art-less fallback slab, for a build with no map art in it.
+        floorFallback?.path = CGPath(roundedRect: CGRect(x: -(size.width - 24) / 2,
+                                                         y: -(size.height - 24) / 2,
+                                                         width: size.width - 24,
+                                                         height: size.height - 24),
+                                     cornerWidth: 26, cornerHeight: 26, transform: nil)
+        floorFallback?.position = CGPoint(x: size.width / 2, y: size.height / 2)
+
+        if let clock = clockArt {
+            clock.size = KitchenArt.mapSize(KitchenArt.clockUnitSize, in: size)
+            clock.position = KitchenArt.mapPoint(KitchenArt.clockUnitCentre, in: size)
+            hudTime.position = KitchenArt.mapPoint(KitchenArt.clockFaceUnitCentre, in: size)
+            hudTime.fontSize = min(22, clock.size.width * KitchenArt.clockFaceWidthFraction * 0.34)
+        }
     }
 
     /// Fills the hands from what the chef is actually holding.
@@ -259,50 +327,126 @@ final class KitchenScene: SKScene {
         flash?.isHidden = true
     }
 
-    /// The room: a floor slab inset from the screen edge, so the counters
-    /// around it read as being against walls.
+    /// The room: the painted forest clearing from the reference art.
+    ///
+    /// The stone pads the props stand on are part of this image, not separate
+    /// nodes — which is why `StationID.unitPosition` cannot be nudged without
+    /// the station sliding off its pad.
+    ///
+    /// Scaled to *cover* rather than fit. The art is 1748x804 (≈2.17:1) and a
+    /// phone in landscape is near enough that the overspill is a few points of
+    /// forest at one edge; letterboxing instead would show bare background
+    /// colour, which reads as a bug.
     private func buildFloor() {
-        let floor = SKShapeNode(rectOf: CGSize(width: size.width - 24,
-                                               height: size.height - 24),
-                                cornerRadius: 26)
-        floor.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        floor.fillColor = floorColour
-        floor.strokeColor = counterEdge.withAlphaComponent(0.35)
-        floor.lineWidth = 2
-        floor.zPosition = -1
-        addChild(floor)
+        guard let texture = SKTexture.kitchenArt("bg-kitchen-clearing") else {
+            // No art in the bundle — fall back to the old plain slab rather
+            // than a blank screen, so the map is still playable.
+            let floor = SKShapeNode(rectOf: CGSize(width: size.width - 24,
+                                                   height: size.height - 24),
+                                    cornerRadius: 26)
+            floor.position = CGPoint(x: size.width / 2, y: size.height / 2)
+            floor.fillColor = floorColour
+            floor.strokeColor = counterEdge.withAlphaComponent(0.35)
+            floor.lineWidth = 2
+            floor.zPosition = -1
+            addChild(floor)
+            floorFallback = floor
+            return
+        }
+
+        let rect = KitchenArt.mapRect(in: size)
+        let art = SKSpriteNode(texture: texture)
+        art.size = rect.size
+        art.position = CGPoint(x: rect.midX, y: rect.midY)
+        art.zPosition = -1
+        addChild(art)
+        floorArt = art
+    }
+
+    /// The ready/busy ring, a little larger than the prop it sits behind.
+    private static func haloPath(for footprint: CGSize) -> CGPath {
+        let box = CGSize(width: footprint.width + 18, height: footprint.height + 18)
+        return CGPath(ellipseIn: CGRect(x: -box.width / 2, y: -box.height / 2,
+                                        width: box.width, height: box.height),
+                      transform: nil)
     }
 
     private func buildStations() {
-        for id in StationID.allCases {
-            let point = CGPoint(x: id.unitPosition.x * size.width,
-                                y: id.unitPosition.y * size.height)
+        // `mapStations`, not `allCases`: the drawer lives inside the storage
+        // room now and has no pin of its own. Leaving it in would put a
+        // labelled box on the grass for a station nobody can walk to.
+        for id in StationID.mapStations {
+            let point = KitchenArt.mapPoint(id.unitPosition, in: size)
             stationPoints[id] = point
 
-            let node = SKShapeNode(rectOf: Self.stationSize, cornerRadius: 12)
+            let node = SKNode()
             node.position = point
-            node.lineWidth = 2.5
-            node.strokeColor = counterEdge
-            node.fillColor = counterColour
             node.zPosition = 1
             addChild(node)
             stationNodes[id] = node
 
-            let label = SKLabelNode(fontNamed: "AvenirNext-Bold")
-            label.text = id.displayName
-            label.fontSize = 14
-            label.fontColor = ink
-            label.verticalAlignmentMode = .center
-            label.position = .zero
-            node.addChild(label)
+            // How big the ready/busy halo and the owner caption have to be.
+            // The *prop*, not the whole sprite: a halo drawn around the sprite
+            // would enclose the name sign too. The placeholder box has no art,
+            // so it keeps the old fixed footprint.
+            let footprint = id.artName == nil
+                ? Self.stationSize
+                : KitchenArt.mapSize(id.propUnitSize, in: size)
 
-            // Sits just under the box so it never collides with the station
-            // name. Only visible while someone is working here.
+            if let art = id.artName, let texture = SKTexture.kitchenArt(art) {
+                let mapRect = KitchenArt.mapRect(in: size)
+                let sprite = SKSpriteNode(texture: texture)
+                sprite.size = KitchenArt.mapSize(id.artUnitSize, in: size)
+                // The plaque hangs off to one side, so the picture is offset
+                // from the point the chef actually stands on.
+                sprite.position = CGPoint(x: id.artUnitOffset.dx * mapRect.width,
+                                          y: id.artUnitOffset.dy * mapRect.height)
+                sprite.zPosition = 1
+                node.addChild(sprite)
+
+                // No name label: every sprite has its plaque painted in. Adding
+                // `displayName` on top would double up the station's name, and
+                // disagree with it too ("Table" over a plaque reading ASSEMBLY
+                // STATION).
+            } else {
+                // No art yet — the drawer. A labelled box, exactly as every
+                // station looked before the art landed.
+                let box = SKShapeNode(rectOf: Self.stationSize, cornerRadius: 12)
+                box.lineWidth = 2.5
+                box.strokeColor = counterEdge
+                box.fillColor = counterColour
+                box.zPosition = 1
+                node.addChild(box)
+
+                let label = SKLabelNode(fontNamed: "AvenirNext-Bold")
+                label.text = id.displayName
+                label.fontSize = 14
+                label.fontColor = ink
+                label.verticalAlignmentMode = .center
+                label.zPosition = 2
+                box.addChild(label)
+            }
+
+            // Behind the prop and a little larger than it, so a lit station
+            // reads as glowing rather than as having grown a border. Centred on
+            // the node — that is the prop — not on the sprite.
+            let halo = SKShapeNode(path: Self.haloPath(for: footprint))
+            halo.lineWidth = 4
+            halo.fillColor = .clear
+            halo.strokeColor = .clear
+            halo.zPosition = 0
+            halo.isHidden = true
+            node.addChild(halo)
+            stationHighlights[id] = halo
+
+            // Sits just under the prop. Only visible while someone is working
+            // here. Cream on a dark outline because it now has to stay legible
+            // over painted grass rather than a flat cream floor.
             let owner = SKLabelNode(fontNamed: "AvenirNext-DemiBold")
-            owner.fontSize = 10
+            owner.fontSize = 11
             owner.verticalAlignmentMode = .center
-            owner.position = CGPoint(x: 0, y: -Self.stationSize.height / 2 - 11)
-            owner.zPosition = 2
+            owner.position = CGPoint(x: 0, y: -footprint.height / 2 - 11)
+            owner.zPosition = 3
             owner.isHidden = true
             node.addChild(owner)
             stationOwnerLabels[id] = owner
@@ -324,7 +468,7 @@ final class KitchenScene: SKScene {
     /// come back to in order to serve — the match ends where it began.
     private func spawnPoint(forColorIndex index: Int) -> CGPoint {
         let unit = ServeRitual.spawnUnitPosition(forColorIndex: index)
-        return CGPoint(x: unit.x * size.width, y: unit.y * size.height)
+        return KitchenArt.mapPoint(unit, in: size)
     }
 
     /// Built once. `refreshStations` runs every frame, and allocating a colour
@@ -362,8 +506,13 @@ final class KitchenScene: SKScene {
         for other in others {
             let player = session.players.first { $0.id == other.playerID }
             let node = remoteChefs[other.playerID] ?? makeRemoteChef(for: other.playerID)
-            let target = CGPoint(x: CGFloat(other.x) * size.width,
-                                 y: CGFloat(other.y) * size.height)
+            // Artboard units, matching what `reportPosition` sends below —
+            // and matching where the stations are. Reading these as a fraction
+            // of the screen would put a chef beside a station rather than at it
+            // on any device whose aspect differs from the sender's.
+            let target = KitchenArt.mapPoint(CGPoint(x: CGFloat(other.x),
+                                                     y: CGFloat(other.y)),
+                                             in: size)
 
             // Snapshots land at 10Hz; the scene runs at 60. Easing between
             // them hides the gap without any real interpolation machinery.
@@ -395,10 +544,31 @@ final class KitchenScene: SKScene {
     }
 
     private func buildHUD() {
-        hudTime.fontSize = 22
+        // The alarm clock from the reference art, with the countdown drawn into
+        // its face. The sprite ships with an empty dial on purpose — the digits
+        // are ours to render, which is the only way they can count down.
+        if let texture = SKTexture.kitchenArt("hud-timer-clock") {
+            let clock = SKSpriteNode(texture: texture)
+            clock.size = KitchenArt.mapSize(KitchenArt.clockUnitSize, in: size)
+            clock.position = KitchenArt.mapPoint(KitchenArt.clockUnitCentre, in: size)
+            clock.zPosition = 19
+            addChild(clock)
+            clockArt = clock
+
+            // Sized off the dial rather than fixed, so "12:00" still fits on a
+            // small phone. Centred, because it now sits inside a circle.
+            let dial = clock.size.width * KitchenArt.clockFaceWidthFraction
+            hudTime.fontSize = min(22, dial * 0.34)
+            hudTime.horizontalAlignmentMode = .center
+            hudTime.verticalAlignmentMode = .center
+            hudTime.position = KitchenArt.mapPoint(KitchenArt.clockFaceUnitCentre, in: size)
+        } else {
+            // No clock art — the plain top-right countdown, as before.
+            hudTime.fontSize = 22
+            hudTime.horizontalAlignmentMode = .right
+            hudTime.position = CGPoint(x: size.width - 20, y: size.height - 38)
+        }
         hudTime.fontColor = ink
-        hudTime.horizontalAlignmentMode = .right
-        hudTime.position = CGPoint(x: size.width - 20, y: size.height - 38)
         hudTime.zPosition = 20
         addChild(hudTime)
 
@@ -517,11 +687,11 @@ final class KitchenScene: SKScene {
 
     private func isServeZoneTap(_ point: CGPoint) -> Bool {
         guard let serveNode else { return false }
-        let dx = point.x - serveNode.zonePoint.x
-        let dy = point.y - serveNode.zonePoint.y
-        // Barely wider than the circle. Any more and it starts eating the
-        // Table station's own tap radius, which sits just above it.
-        return sqrt(dx * dx + dy * dy) <= ServeRitual.zoneRadius(for: size) + 8
+        // Barely wider than the ring itself. Any more and it starts eating the
+        // tap radius of the stations around it — Mixing and Storage are the
+        // nearest, and both sit well inside 70pt of the middle.
+        return ServeRitual.zoneContains(point, centre: serveNode.zonePoint,
+                                        in: size, slack: 8)
     }
 
     /// What can be done at this station right now.
@@ -618,13 +788,11 @@ final class KitchenScene: SKScene {
         guard let serveNode, let serve = ServeRitual.action else { return }
 
         let unlocked = state.isUnlocked(serve)
-        let dx = chef.position.x - serveNode.zonePoint.x
-        let dy = chef.position.y - serveNode.zonePoint.y
         // A chef holding rot can't be part of the ritual — the tap gate keeps
         // them out of the circle, and this keeps them out of the host's count
         // if they were already standing on their mark when the rot landed.
         let inZone = unlocked && !isCarryingRotten
-            && sqrt(dx * dx + dy * dy) <= ServeRitual.zoneRadius(for: size)
+            && ServeRitual.zoneContains(chef.position, centre: serveNode.zonePoint, in: size)
 
         if inZone != isInServeZone {
             isInServeZone = inZone
@@ -756,9 +924,13 @@ final class KitchenScene: SKScene {
             return
         }
 
-        // Neither is the drawer — it opens its own 2x2 shelf overlay.
+        // The drawer is no longer somewhere a chef can stand — its shelves are
+        // the Storage Rack tab inside the pantry, which `.storage` above opens.
+        // `StationID.mapStations` never hands us this, so it can only be
+        // reached by someone wiring a new caller; send them to the pantry
+        // rather than to a screen with no way back.
         if station == .drawer {
-            onOpenDrawer?()
+            onOpenStorage?()
             return
         }
 
@@ -1061,8 +1233,12 @@ final class KitchenScene: SKScene {
             }
 
             resolveWaiting(session)
-            session.reportPosition(x: Double(chef.position.x / size.width),
-                                   y: Double(chef.position.y / size.height),
+            // Sent in artboard units, not screen fractions — see the note in
+            // `KitchenArt.mapUnit`. Both ends of the wire run this same code,
+            // so the two agree.
+            let unit = KitchenArt.mapUnit(chef.position, in: size)
+            session.reportPosition(x: Double(unit.x),
+                                   y: Double(unit.y),
                                    station: chefStation?.rawValue,
                                    isBusy: activeAction != nil)
             // Someone else finishing an action can unlock a station in front of
@@ -1124,40 +1300,40 @@ final class KitchenScene: SKScene {
     /// Re-assigning `SKLabelNode.text` rebuilds its texture, which at 60fps
     /// across eight stations is a real cost for no visible difference.
     private func refreshStations() {
-        for (id, node) in stationNodes {
+        for id in stationNodes.keys {
             let owner = session?.occupant(of: id)
-            // The bin is always "available" in recipe terms (repeatable, no
-            // requirements), which would leave it lit all game. Light it for
-            // the one chef who has something to throw out instead.
-            let ready = id == .trash
-                ? isCarryingRotten
-                : (id == .storage || id == .drawer || state.availableAction(at: id) != nil)
-            let key = owner.map { "busy:\($0.id):\($0.colorIndex)" } ?? "free:\(ready)"
+            // Occupancy is the only thing drawn now, so it is the only thing
+            // the change-check needs. Availability used to be in this key to
+            // drive the green ready ring; with that gone, computing it meant
+            // calling `state.availableAction(at:)` for nine stations sixty
+            // times a second to decide nothing.
+            let key = owner.map { "busy:\($0.id):\($0.colorIndex)" } ?? "free"
             if stationLooks[id] == key { continue }
             stationLooks[id] = key
 
             let label = stationOwnerLabels[id]
+            let halo = stationHighlights[id]
 
             // Occupancy wins over availability: a station can be perfectly
             // ready and still be someone else's until they walk out.
             if let owner {
-                node.strokeColor = Self.colour(owner.colorIndex)
-                node.lineWidth = 3
-                node.fillColor = Self.fill(owner.colorIndex)
+                halo?.isHidden = false
+                halo?.strokeColor = Self.colour(owner.colorIndex)
+                halo?.fillColor = Self.fill(owner.colorIndex)
+                halo?.lineWidth = 4
                 label?.isHidden = false
                 label?.fontColor = Self.colour(owner.colorIndex)
                 label?.text = owner.id == session?.localPlayerID
                     ? "you're here"
                     : "\(owner.name) is here"
             } else {
-                // Free. "Ready" is a filled green tint rather than a slightly
-                // greener outline — at arm's length on a phone, line weight is
-                // not a signal anyone reads.
-                node.fillColor = ready
-                    ? readyColour.withAlphaComponent(0.18)
-                    : counterColour
-                node.strokeColor = ready ? readyColour : counterEdge
-                node.lineWidth = ready ? 4 : 2.5
+                // Free. Nothing is drawn — not even on a station that has an
+                // action waiting. The green "ready" ring used to sit here, and
+                // it read as a UI overlay pasted onto a painted scene. What a
+                // chef can do at a station is answered by the station popup on
+                // arrival, and by the recipe book; it does not also need a
+                // circle on the grass.
+                halo?.isHidden = true
                 label?.isHidden = true
             }
         }

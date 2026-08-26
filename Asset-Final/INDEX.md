@@ -6,12 +6,14 @@ Two imports, one tree:
 |---|---|---|---|
 | `art direction/` | 2026-08-26 | 185 | Figma board scrape — mostly flattened screen mockups |
 | `cook or cooked assets/` | 2026-08-26 | 115 | Clean transparent-PNG asset drop |
+| `missed in round 1/` | 2026-08-26 | 11 | Follow-up drop — 9 new sprites, 2 duplicates. Folder now empty; see `MISSING-ASSETS.md` |
+| loose PNGs at project root | 2026-08-26 | 53 | Third drop — 18 new (plaque-free props + name plates), 34 duplicates, 1 higher-res replacement. Root now clean |
 
 Both raw exports are preserved untouched at `../Asset-Final-BACKUP-20260826/`.
 
 ```
 Asset-Final/
-├── Assets-By-Screen/   129 shippable PNGs, grouped by the screen that uses them
+├── Assets-By-Screen/   158 shippable PNGs, grouped by the screen that uses them
 ├── Screens/             91 full-screen mockups (design reference, not shipped)
 ├── _missing-refs/       65 cropped references for assets still not exported
 ├── _unused/             83 duplicates, junk and superseded files — safe to delete
@@ -43,11 +45,12 @@ depends on them.**
 |---|---|---|
 | `bg-` | full-bleed background plate (1748 × 804) | 5 |
 | `panel-` | stone slab / panel that UI sits on | 3 |
-| `station-` | kitchen-map prop, name plaque attached | 8 |
-| `prop-` | scene furniture (oven, stove, rack) | 4 |
+| `station-` | kitchen-map prop, name plaque attached (+ the blank plank) | 10 |
+| `label-` | station name lettering, no plank behind it | 10 |
+| `prop-` | scene furniture, plaque-free (oven, stove, rack, board, bowl, bench, cabinet, bin, table) | 13 |
 | `char-` | animal character, full body | 7 |
 | `paw-` | first-person paws (bottom-right of station screens) | 6 |
-| `btn-` | button or signpost | 5 |
+| `btn-` | button or signpost | 6 |
 | `hud-` | persistent in-game chrome | 1 |
 | `header-` | wide banner header | 1 |
 | `book-` | recipe book element | 2 |
@@ -56,11 +59,11 @@ depends on them.**
 | `step-instructions-` | step instruction body, detail view | 11 |
 | `overlay-screen-` | full-frame tutorial overlay (scrim + glyph) | 8 |
 | `gesture-` | tutorial glyph alone, trimmed, no scrim | 8 |
-| `ingredient-` | raw ingredient sprite | 14 |
+| `ingredient-` | raw ingredient sprite | 17 |
 | `utensil-` | tool sprite | 15 |
-| `prepared-` | step-output sprite (bowls, dough, cake) | 8 |
+| `prepared-` | step-output sprite (bowls, dough, cake) | 12 |
 | `ui-` | native-style interface element | 1 |
-| **Total** | | **129** |
+| **Total** | | **158** |
 
 Screen mockups in `Screens/` keep their own `screen-NN-` prefix (91 files).
 

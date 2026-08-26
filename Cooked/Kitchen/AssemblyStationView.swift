@@ -39,6 +39,8 @@
 //
 
 import SwiftUI
+import CoreMotion
+import Combine
 
 struct AssemblyStationView: View {
     let station: StationID
@@ -59,6 +61,8 @@ struct AssemblyStationView: View {
     @State private var pipingAngle: Double = -.pi / 2
     /// Last touch angle around the cake, for measuring how far a drag swept.
     @State private var lastTouchAngle: Double?
+    /// The phone's own tilt-and-swirl, on hardware that has the sensor.
+    @StateObject private var swirl = TiltSwirlReader()
 
     /// How much circling assembles the cake — two full turns.
     private let sweepNeeded: Double = 4 * .pi
@@ -194,7 +198,12 @@ struct AssemblyStationView: View {
                 // Under the corner buttons on purpose: back and help stay
                 // reachable mid-action, and only taps that miss both of them
                 // count as work.
-                if isWorking { workSurface(geo) }
+                // The touch surface is needed for decorating always (there is
+                // no sensor version of "tap the cake") and for assembling only
+                // where there's no sensor to swirl.
+                if isWorking && (isDecorating || !TiltSwirlReader.isAvailable) {
+                    workSurface(geo)
+                }
 
                 backButton(geo)
                 helpButton(geo)
@@ -213,6 +222,15 @@ struct AssemblyStationView: View {
         }
         .ignoresSafeArea()
         .onAppear { flashTutorial() }
+        // Never leave the sensor running behind us: backing out mid-swirl, or
+        // the page being torn down by the round ending, both land here.
+        .onDisappear { swirl.stop() }
+        .onChange(of: swirl.swept) { _, swept in
+            guard isWorking, !isDecorating else { return }
+            pipingAngle = swirl.angle
+            progress = min(1, swept / sweepNeeded)
+            if progress >= 1 { finish() }
+        }
     }
 
     // MARK: Backdrop
@@ -393,6 +411,7 @@ struct AssemblyStationView: View {
                     taps = 0
                     lastTouchAngle = nil
                     pipingAngle = -.pi / 2
+                    if !isDecorating { swirl.reset(); swirl.start() }
                 }
             }
         }
@@ -482,6 +501,7 @@ struct AssemblyStationView: View {
     /// button that started the minigame.
     private func finish() {
         guard let action else { return }
+        swirl.stop()
         isWorking = false
         progress = 0
         taps = 0
@@ -517,7 +537,13 @@ struct AssemblyStationView: View {
                         .frame(maxWidth: geo.size.width * 0.34,
                                maxHeight: geo.size.height * 0.4)
                 }
-                Text(isDecorating ? "Tap" : "Tilt, then move in circle")
+                // On a simulator there is no sensor to tilt, so this reads
+                // out the fallback the minigame actually listens for rather
+                // than an instruction nothing can follow — the same courtesy
+                // `ActionMotion.instruction` pays to shaking and flicking.
+                Text(isDecorating ? "Tap"
+                     : (TiltSwirlReader.isAvailable ? "Tilt, then move in circle"
+                                                    : "Drag in circles"))
                     .font(.system(size: 21, weight: .heavy, design: .rounded))
                     .foregroundStyle(StationPalette.cream)
             }
@@ -566,4 +592,78 @@ private struct WorkInput: ViewModifier {
                                                                               name: "Baked base",
                                                                               isPrep: true)),
                         onClose: {})
+}
+
+// MARK: - Tilt and swirl
+
+/// Reads the phone being tilted and walked round in a circle — the gesture the
+/// assemble tutorial teaches ("Tilt", then "Move in circle").
+///
+/// It measures the same thing the touch fallback does: how far round the chef
+/// has gone. `attitude.roll` and `attitude.pitch` together say which way the
+/// phone is leaning, so `atan2` of the two is the direction of the lean and
+/// swirling the phone sweeps that angle round. Accumulating `abs(delta)` gives
+/// the turns.
+///
+/// Why a lean threshold rather than counting any wobble: held flat, roll and
+/// pitch are both near zero and their `atan2` is pure noise, which would fill
+/// the bar while the phone sits on a table. Requiring a real lean before any of
+/// it counts is what makes the tutorial's first word ("Tilt") mean something.
+@MainActor
+final class TiltSwirlReader: ObservableObject {
+
+    /// Checked once and cached. A `CMMotionManager` is not free to stand up,
+    /// and the answer cannot change while the app is running.
+    static let isAvailable: Bool = CMMotionManager().isDeviceMotionAvailable
+
+    /// Radians swept since the last `reset`.
+    @Published private(set) var swept: Double = 0
+    /// Which way the phone is leaning, for pointing the piping bag.
+    @Published private(set) var angle: Double = -.pi / 2
+
+    private let manager = CMMotionManager()
+    private var lastAngle: Double?
+
+    /// How far the phone has to lean before the swirl counts. Radians, and
+    /// generous — this is "off the flat", not "at arm's length".
+    private let leanNeeded: Double = 0.15
+
+    func start() {
+        guard Self.isAvailable, !manager.isDeviceMotionActive else { return }
+        manager.deviceMotionUpdateInterval = 1.0 / 60.0
+        manager.startDeviceMotionUpdates(to: .main) { [weak self] reading, _ in
+            guard let self, let attitude = reading?.attitude else { return }
+
+            let roll = attitude.roll, pitch = attitude.pitch
+            guard sqrt(roll * roll + pitch * pitch) >= self.leanNeeded else {
+                // Dropped back to flat. Forget where we were, so tipping over
+                // to the other side doesn't read as half a turn.
+                self.lastAngle = nil
+                return
+            }
+
+            let now = atan2(roll, pitch)
+            self.angle = now
+            defer { self.lastAngle = now }
+            guard let last = self.lastAngle else { return }
+
+            // Shortest way round, so crossing the -pi/pi seam isn't a full
+            // turn backwards.
+            var delta = now - last
+            if delta > .pi { delta -= 2 * .pi }
+            if delta < -.pi { delta += 2 * .pi }
+            self.swept += abs(delta)
+        }
+    }
+
+    func stop() {
+        manager.stopDeviceMotionUpdates()
+        lastAngle = nil
+    }
+
+    func reset() {
+        swept = 0
+        lastAngle = nil
+        angle = -.pi / 2
+    }
 }

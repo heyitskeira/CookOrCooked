@@ -97,7 +97,7 @@ struct PlayerNameView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { nameFocused = false }
-        .fullScreenCover(isPresented: $showSettings) {
+        .instantFullScreenCover(isPresented: $showSettings) {
             SettingsView()
         }
     }

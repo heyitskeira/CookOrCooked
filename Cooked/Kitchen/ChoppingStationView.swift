@@ -7,7 +7,7 @@
 //  art was measured against, then scaled to whatever size the device
 //  actually gives us — the same normalised-coordinate trick
 //  `StationID.unitPosition` already uses for the kitchen map itself. See
-//  `canvasOrigin`/`canvas` for what that artboard actually is.
+//  `StationCanvas` for what that artboard actually is.
 //
 //  Scope: this is the whole chopping station now, start to finish, on one
 //  page — arrive at an empty board (drop + a dimmed start button), load it,
@@ -49,19 +49,9 @@ struct ChoppingStationView: View {
     /// off whatever this boolean happens to equal.
     @State private var chopBounce = false
 
-    /// The Figma artboard every (x, y, w, h) below was measured against.
-    ///
-    /// This is NOT the background PNG's own pixel size (874x402) — that's
-    /// just the raw asset before Figma stretched it to (919.18, 513) to
-    /// bleed past the artboard on every edge. The artboard itself is that
-    /// stretched frame: origin (-22, -81), size (919.18, 513). Every other
-    /// element's x/y is stated in that same shared space, so anything
-    /// negative (the back button's y = -56, for one) is still on-screen —
-    /// it only looked off-screen while this used (0,0) as the origin, which
-    /// pushed it above the real top edge instead of just above local (0,0)
-    /// within the artboard.
-    fileprivate static let canvasOrigin = CGPoint(x: -22, y: -81)
-    fileprivate static let canvas = CGSize(width: 919.18, height: 513)
+    /// Every (x, y, w, h) below is measured against the shared station
+    /// artboard — see `StationCanvas` for what that box is and why its origin
+    /// isn't (0, 0).
 
     // MARK: Snapshot-derived state — same rules as StationPopupView
 
@@ -117,12 +107,12 @@ struct ChoppingStationView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                backgroundLayer(geo)
-                stoneSlabLayer(geo)
+                StationGround(geo: geo)
                 cuttingBoardLayer(geo)
                 boardFoodLayer(geo)
-                handsLayer(geo)
-                progressBar(geo)
+                StationHands(inventory: inventory, geo: geo)
+                StationHeaderBar(title: action?.name ?? station.displayName,
+                                 progress: chopProgress, geo: geo)
 
                 // Underneath the corner buttons in z-order on purpose: back
                 // and help stay reachable mid-chop (backing out, or
@@ -135,8 +125,8 @@ struct ChoppingStationView: View {
                         .onTapGesture(perform: registerChopTap)
                 }
 
-                backButton(geo)
-                helpButton(geo)
+                StationBackButton(geo: geo, action: onClose)
+                StationHelpButton(geo: geo, action: flashTutorial)
                 controls(geo)
 
                 if let alert {
@@ -150,32 +140,6 @@ struct ChoppingStationView: View {
         }
         .ignoresSafeArea()
         .onAppear { flashTutorial() }
-    }
-
-    // MARK: Background
-
-    private func backgroundLayer(_ geo: GeometryProxy) -> some View {
-        Group {
-            if let art = namedImage("forest-background") {
-                Image(uiImage: art).resizable().scaledToFill()
-            } else {
-                LinearGradient(colors: [Color(red: 0.24, green: 0.32, blue: 0.26),
-                                        Color(red: 0.14, green: 0.20, blue: 0.16)],
-                               startPoint: .top, endPoint: .bottom)
-            }
-        }
-        .frame(width: geo.size.width, height: geo.size.height)
-        .clipped()
-    }
-
-    // Reusable stone counter. Figma: (96, 25, 682, 381).
-    private func stoneSlabLayer(_ geo: GeometryProxy) -> some View {
-        Group {
-            if let art = namedImage("stone-slab") {
-                Image(uiImage: art).resizable().scaledToFit()
-            }
-        }
-        .figmaPlaced(96, 25, 682, 381, in: geo)
     }
 
     // MARK: The board and what's on it
@@ -217,46 +181,7 @@ struct ChoppingStationView: View {
         }
     }
 
-    // MARK: Hands — base paws, plus whatever's held
-
-    private func handsLayer(_ geo: GeometryProxy) -> some View {
-        ZStack {
-            if let art = namedImage("hands") {
-                Image(uiImage: art).resizable().scaledToFit()
-                    // y shifted +13 from the brief: that box stopped 13 units
-                    // short of the artboard's true bottom edge, leaving a gap
-                    // under the paws even with bottom-alignment. Shifted the
-                    // whole cluster (this + the two below) down by the same
-                    // amount so their relative positions to each other don't
-                    // change — just where the group sits as a whole.
-                    .figmaPlaced(687, 312, 171, 120, alignment: .bottom, in: geo)
-            }
-
-            // Whatever's actually in the ingredient hand — raw strawberries
-            // on the way in, the chopped result on the way back out once
-            // "Pick up" puts it there. Looked up by id rather than one
-            // hardcoded name for the same reason as `boardFoodLayer`: this
-            // slot holds more than one possible food over a single visit.
-            if let food = inventory.ingredient?.id, let art = namedImage(food) {
-                Image(uiImage: art).resizable().scaledToFit()
-                    .figmaPlaced(663, 290, 134, 104, alignment: .bottom, in: geo)
-            }
-
-            if inventory.utensil?.id == "knife", let art = namedImage("knife") {
-                Image(uiImage: art).resizable().scaledToFit()
-                    .figmaPlaced(773, 276, 104, 131, alignment: .bottom, in: geo)
-            }
-        }
-    }
-
-    // MARK: Progress bar — built from shapes, not an image
-    //
-    // No top-level rect for the bar itself was in the brief (only the badge
-    // embedded in it, given as an offset relative to the bar's own corner:
-    // (-12, -12), 61x54). The bar's own box below is inferred from the gap
-    // between the back button and the timer in the screenshots.
-
-    private static let progressBarFrame = (x: 170.0, y: -56.0, w: 560.0, h: 52.0)
+    // MARK: What the shared header bar fills with
 
     /// Empty before anything's on the board, live tap-by-tap while chopping,
     /// full once the chopped result exists — a real number now, not the
@@ -267,91 +192,17 @@ struct ChoppingStationView: View {
         return 0
     }
 
-    private func progressBar(_ geo: GeometryProxy) -> some View {
-        let bar = Self.progressBarFrame
-        let fill = chopProgress
-
-        return ZStack(alignment: .leading) {
-            Capsule().fill(Color(red: 0.97, green: 0.94, blue: 0.88))
-            GeometryReader { barGeo in
-                Capsule()
-                    .fill(Color(red: 0.36, green: 0.20, blue: 0.14))
-                    .frame(width: barGeo.size.width * fill)
-                    .animation(.easeOut(duration: 0.15), value: fill)
-            }
-            Text(action?.name ?? station.displayName)
-                .font(.system(size: 15, weight: .bold, design: .rounded))
-                .foregroundStyle(Color(red: 0.36, green: 0.20, blue: 0.14))
-                .frame(maxWidth: .infinity, alignment: .center)
-        }
-        .overlay(Capsule().stroke(Color(red: 0.36, green: 0.20, blue: 0.14).opacity(0.4), lineWidth: 1.5))
-        .figmaPlaced(bar.x, bar.y, bar.w, bar.h, in: geo)
-        .overlay(alignment: .topLeading) {
-            if let art = namedImage("bucket-strawberries") {
-                Image(uiImage: art).resizable().scaledToFit()
-                    .figmaPlaced(bar.x - 12, bar.y - 12, 61, 54, in: geo)
-            }
-        }
-    }
-
-    // MARK: Corner buttons
-
-    /// Figma said (132, 52) for the back button, which matched neither the
-    /// source image's full aspect ratio nor, it turns out, what actually
-    /// needed showing. The source PNG (156x234) is a square arrow-plank with
-    /// a wooden post rising above it for hanging — fitting the *whole* image
-    /// (post included) into any small box leaves the plank, the only part
-    /// with the arrow on it, occupying just the bottom third of that box.
-    /// This instead scales to width, then crops to a square anchored at the
-    /// bottom, keeping the plank and dropping the post — same treatment
-    /// `help.png` doesn't need because it has no post to begin with.
-    private func backButton(_ geo: GeometryProxy) -> some View {
-        let side = 52.0
-        return Button(action: onClose) {
-            Group {
-                if let art = namedImage("station-back-button") {
-                    // The crop has to work off whatever size figmaPlaced
-                    // actually allocates (device-scaled), not the raw
-                    // design-space `side` — this GeometryReader is that size.
-                    GeometryReader { box in
-                        Image(uiImage: art)
-                            .resizable()
-                            .frame(width: box.size.width, height: box.size.width * (234.0 / 156.0))
-                            .frame(width: box.size.width, height: box.size.height, alignment: .bottom)
-                            .clipped()
-                    }
-                } else {
-                    Image(systemName: "chevron.left").foregroundStyle(.white)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Leave the station")
-        .figmaPlaced(49, -56, side, side, in: geo)
-    }
-
-    private func helpButton(_ geo: GeometryProxy) -> some View {
-        Button { flashTutorial() } label: {
-            Group {
-                if let art = namedImage("help") {
-                    Image(uiImage: art).resizable().scaledToFit()
-                } else {
-                    Image(systemName: "questionmark").foregroundStyle(.white)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("How this station works")
-        .figmaPlaced(23, 329, 52.5, 52, in: geo)
-    }
-
     // MARK: Controls — drop/pick-up, then the single start button
 
     /// Hidden entirely while chopping — the board itself is the interaction
     /// once the minigame starts, and there's nothing here to drop, pick up,
     /// or start twice until it either finishes or the chef leaves.
     private func controls(_ geo: GeometryProxy) -> some View {
-        Group {
+        // Centred on the board itself, so the buttons sit where the chef is
+        // already looking.
+        let board = StationCanvas.rect(Self.cuttingBoardFrame.x, Self.cuttingBoardFrame.y,
+                                       Self.cuttingBoardFrame.w, Self.cuttingBoardFrame.h, in: geo)
+        return Group {
             if !isChopping {
                 VStack(spacing: 10) {
                     if output != nil {
@@ -395,9 +246,8 @@ struct ChoppingStationView: View {
                         }
                     }
                 }
-                .frame(width: Self.cuttingBoardFrame.w / Self.canvas.width * geo.size.width * 0.92)
-                .position(x: (Self.cuttingBoardFrame.x - Self.canvasOrigin.x + Self.cuttingBoardFrame.w / 2) / Self.canvas.width * geo.size.width,
-                         y: (Self.cuttingBoardFrame.y - Self.canvasOrigin.y + Self.cuttingBoardFrame.h / 2) / Self.canvas.height * geo.size.height)
+                .frame(width: board.width * 0.92)
+                .position(x: board.midX, y: board.midY)
             }
         }
     }
@@ -434,11 +284,11 @@ struct ChoppingStationView: View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 16, weight: .bold, design: .rounded))
-                .foregroundStyle(Color(red: 0.36, green: 0.20, blue: 0.14))
+                .foregroundStyle(StationPalette.ink)
                 .frame(maxWidth: .infinity)
                 .frame(height: 42)
-                .background(Capsule().fill(Color(red: 0.98, green: 0.95, blue: 0.89)))
-                .overlay(Capsule().stroke(Color(red: 0.36, green: 0.20, blue: 0.14), lineWidth: 2))
+                .background(Capsule().fill(StationPalette.cream))
+                .overlay(Capsule().stroke(StationPalette.ink, lineWidth: 2))
         }
         .buttonStyle(.plain)
         .opacity(enabled ? 1 : 0.45)
@@ -479,35 +329,6 @@ struct ChoppingStationView: View {
     // MARK: Art lookup
 
     private func namedImage(_ name: String) -> UIImage? { FoodArt.art(name) }
-}
-
-// MARK: - Figma-to-device placement
-//
-// Every position in this file was measured against the artboard described by
-// `ChoppingStationView.canvasOrigin`/`canvas`. This scales that box onto
-// whatever size the device actually gives us — same idea as
-// `StationID.unitPosition`, just for a whole rect instead of a single point.
-
-private extension View {
-    /// `alignment` matters whenever the art's own aspect ratio doesn't match
-    /// the given box: `.scaledToFit()` then renders smaller than the box on
-    /// one axis, and by default SwiftUI centers that slack on both sides.
-    /// For anything meant to sit flush against an edge (hands resting on the
-    /// bottom of the screen, say), centering puts half the slack on the
-    /// wrong side and the art visibly floats off that edge — pass the edge
-    /// it should hug instead.
-    func figmaPlaced(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat,
-                     alignment: Alignment = .center, in geo: GeometryProxy) -> some View {
-        let origin = ChoppingStationView.canvasOrigin
-        let canvas = ChoppingStationView.canvas
-        let sx = geo.size.width / canvas.width
-        let sy = geo.size.height / canvas.height
-        let localX = x - origin.x
-        let localY = y - origin.y
-        return self
-            .frame(width: w * sx, height: h * sy, alignment: alignment)
-            .position(x: (localX + w / 2) * sx, y: (localY + h / 2) * sy)
-    }
 }
 
 #Preview("Nothing dropped") {

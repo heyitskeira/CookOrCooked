@@ -1,0 +1,1121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cook or Cooked — Photobooth</title>
+<style>
+/* ============================================================
+   Cook or Cooked — Photobooth
+   Palette lifted straight from Cooked/Theme.swift so the booth
+   and the game speak the same language.
+   ============================================================ */
+:root{
+  --cream:#F7EBD4;
+  --cream-deep:#F0DBB8;
+  --tomato:#E8453D;
+  --ink:#211C1A;
+  --basil:#3D8C52;
+  --sand:#E1CBB0;
+  --stone:#272320;
+  --bark:#645144;
+  --bark-deep:#493A2F;
+  --paper:#FFEBD8;
+  --parchment:#FFEFDF;
+
+  --display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI",
+             "Helvetica Neue", Arial, sans-serif;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:var(--display);
+  color:var(--parchment);
+  background:#1c2418;
+  overflow-x:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ---- Forest backdrop ------------------------------------- */
+.backdrop{
+  position:fixed; inset:0; z-index:0;
+  background:url('assets/frames/forest.png') center/cover no-repeat;
+}
+.backdrop::after{
+  content:''; position:absolute; inset:0;
+  background:
+    radial-gradient(ellipse at 50% 30%, rgba(0,0,0,0) 0%, rgba(16,22,14,.55) 70%, rgba(11,16,10,.85) 100%),
+    linear-gradient(180deg, rgba(20,28,18,.35), rgba(14,20,13,.7));
+}
+
+.wrap{position:relative; z-index:1; max-width:1240px; margin:0 auto; padding:28px 20px 64px}
+
+/* ---- Header ---------------------------------------------- */
+header{display:flex; flex-direction:column; align-items:center; gap:10px; margin-bottom:26px}
+header img.logo{width:min(320px,62vw); height:auto; filter:drop-shadow(0 8px 18px rgba(0,0,0,.45))}
+.kicker{
+  font-size:clamp(13px,2.1vw,17px); font-weight:900; letter-spacing:.22em;
+  font-stretch:condensed; color:var(--sand);
+  text-shadow:0 2px 0 var(--stone), 0 4px 12px rgba(0,0,0,.5);
+}
+
+/* ---- Wooden signboard panel ------------------------------ */
+.panel{
+  background:linear-gradient(180deg,#6E5847,#513f33);
+  border:4px solid var(--stone);
+  border-radius:26px;
+  box-shadow:0 14px 0 rgba(0,0,0,.28), 0 24px 48px rgba(0,0,0,.45), inset 0 2px 0 rgba(255,255,255,.12);
+  padding:22px;
+  position:relative;
+}
+.panel::before{ /* faint plank grain */
+  content:''; position:absolute; inset:6px; border-radius:20px; pointer-events:none;
+  background:repeating-linear-gradient(180deg, rgba(255,255,255,.05) 0 2px, rgba(0,0,0,0) 2px 26px);
+  opacity:.6;
+}
+.panel > *{position:relative}
+
+h2.plaque{
+  font-size:clamp(17px,2.4vw,22px); font-weight:900; font-stretch:condensed;
+  letter-spacing:.14em; color:var(--parchment); text-align:center;
+  text-shadow:0 2px 0 var(--stone); margin-bottom:14px;
+}
+.hint{font-size:13px; color:var(--sand); text-align:center; line-height:1.5; opacity:.9}
+
+/* ---- Pill button (mirrors PillButton in Theme.swift) ------ */
+.pill{
+  display:inline-flex; align-items:center; justify-content:center; gap:9px;
+  font-family:inherit; font-size:clamp(15px,2vw,19px); font-weight:900;
+  font-stretch:condensed; letter-spacing:.09em;
+  padding:0 30px; height:60px; min-width:170px;
+  border-radius:999px; border:3px solid var(--ink); cursor:pointer;
+  background:var(--tomato); color:var(--parchment);
+  box-shadow:0 5px 0 rgba(0,0,0,.35), 0 8px 18px rgba(0,0,0,.35);
+  transition:transform .06s ease, box-shadow .06s ease, filter .15s ease;
+  user-select:none; -webkit-user-select:none;
+}
+.pill:hover{filter:brightness(1.06)}
+.pill:active{transform:translateY(4px); box-shadow:0 1px 0 rgba(0,0,0,.35), 0 3px 8px rgba(0,0,0,.35)}
+.pill:disabled{opacity:.45; cursor:not-allowed; transform:none}
+.pill.cream{background:var(--paper); color:var(--bark-deep)}
+.pill.basil{background:var(--basil); color:var(--parchment)}
+.pill.ghost{background:rgba(255,239,223,.12); color:var(--parchment); box-shadow:0 4px 0 rgba(0,0,0,.3)}
+.pill.small{height:46px; min-width:0; font-size:14px; padding:0 20px; border-width:2.5px}
+
+.row{display:flex; flex-wrap:wrap; gap:12px; justify-content:center; align-items:center}
+
+/* ---- Screens --------------------------------------------- */
+.screen{display:none}
+.screen.on{display:block}
+
+/* ---- Setup ------------------------------------------------ */
+.setup-grid{display:grid; grid-template-columns:1fr; gap:18px}
+@media(min-width:900px){ .setup-grid{grid-template-columns:1.05fr .95fr} }
+
+.animals{width:100%; max-width:360px; margin:0 auto 8px; display:block;
+  filter:drop-shadow(0 10px 22px rgba(0,0,0,.5))}
+
+fieldset{border:0; margin-bottom:18px}
+legend{
+  font-size:12px; font-weight:900; letter-spacing:.2em; font-stretch:condensed;
+  color:var(--sand); margin-bottom:9px; text-transform:uppercase;
+}
+.choices{display:flex; flex-wrap:wrap; gap:9px}
+
+/* Stone-tile selector, like the player-count tiles in game */
+.tile{
+  font-family:inherit; font-size:14px; font-weight:900; font-stretch:condensed;
+  letter-spacing:.06em; color:var(--parchment); cursor:pointer;
+  background:rgba(39,35,32,.72); border:2.5px solid var(--stone);
+  border-radius:14px; padding:11px 16px; transition:all .14s ease;
+}
+.tile:hover{background:rgba(39,35,32,.9)}
+.tile[aria-pressed="true"]{
+  background:var(--paper); color:var(--bark-deep);
+  border-color:var(--ink); box-shadow:0 0 0 3px rgba(232,69,61,.55);
+}
+.tile .swatch{
+  display:inline-block; width:13px; height:13px; border-radius:4px;
+  border:1.5px solid var(--ink); vertical-align:-2px; margin-right:7px;
+}
+
+/* Frame tiles that show the real strip art */
+.frame-tiles{display:grid; grid-template-columns:repeat(auto-fill,minmax(72px,1fr)); gap:10px}
+.frame-tile{
+  background:rgba(39,35,32,.6); border:2.5px solid var(--stone); border-radius:12px;
+  padding:5px; cursor:pointer; display:flex; flex-direction:column; gap:5px;
+  align-items:center; transition:all .14s ease;
+}
+.frame-tile:hover{background:rgba(39,35,32,.9)}
+.frame-tile[aria-pressed="true"]{border-color:var(--tomato); box-shadow:0 0 0 3px rgba(232,69,61,.5)}
+.frame-tile .thumb{
+  width:100%; aspect-ratio:700/1712; border-radius:7px; overflow:hidden;
+  background:var(--cream) center/cover no-repeat; display:block;
+}
+.frame-tile .cap{
+  font-size:9.5px; font-weight:900; letter-spacing:.05em; font-stretch:condensed;
+  color:var(--parchment); text-align:center; line-height:1.15;
+}
+
+input[type=text]{
+  width:100%; font-family:inherit; font-size:16px; font-weight:800;
+  color:var(--bark-deep); background:var(--paper);
+  border:3px solid var(--ink); border-radius:14px; padding:12px 14px;
+}
+input[type=text]::placeholder{color:#a8907c}
+input[type=text]:disabled{opacity:.45}
+
+.note{
+  font-size:12.5px; font-weight:800; letter-spacing:.06em; color:var(--sand);
+  background:rgba(39,35,32,.5); border:2px dashed rgba(225,203,176,.35);
+  border-radius:12px; padding:10px 13px; line-height:1.45;
+}
+
+/* ---- Shoot ------------------------------------------------ */
+.stage-wrap{display:flex; flex-direction:column; align-items:center; gap:16px}
+.stage{
+  position:relative; width:min(760px,94vw);
+  background:#0e130c; border:5px solid var(--stone); border-radius:22px;
+  overflow:hidden; box-shadow:0 16px 44px rgba(0,0,0,.6), inset 0 0 0 4px rgba(255,235,216,.16);
+}
+.stage video{width:100%; height:100%; object-fit:cover; display:block; background:#0e130c}
+.stage video.mirror{transform:scaleX(-1)}
+.stage .vignette{position:absolute; inset:0; pointer-events:none;
+  box-shadow:inset 0 0 90px rgba(0,0,0,.55)}
+
+.countdown{position:absolute; inset:0; display:none; place-items:center; pointer-events:none}
+.countdown.on{display:grid}
+.countdown img{width:min(230px,42%); filter:drop-shadow(0 10px 26px rgba(0,0,0,.6))}
+.countdown .num{
+  position:absolute; font-size:min(120px,22vw); font-weight:900; font-stretch:condensed;
+  color:var(--tomato); -webkit-text-stroke:5px var(--stone);
+  paint-order:stroke fill; line-height:1; margin-top:.06em;
+  animation:pop .85s ease-out;
+}
+@keyframes pop{ 0%{transform:scale(.55); opacity:0} 35%{transform:scale(1.12); opacity:1} 100%{transform:scale(1)} }
+
+.flash{position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none}
+.flash.go{animation:flash .42s ease-out}
+@keyframes flash{0%{opacity:.95} 100%{opacity:0}}
+
+.shot-dots{display:flex; gap:10px; justify-content:center}
+.shot-dots span{
+  width:15px; height:15px; border-radius:50%; background:rgba(255,235,216,.22);
+  border:2.5px solid var(--stone); transition:background .2s ease;
+}
+.shot-dots span.done{background:var(--tomato)}
+.shot-dots span.now{background:var(--sand)}
+
+.status{
+  font-size:14px; font-weight:900; letter-spacing:.14em; font-stretch:condensed;
+  color:var(--sand); text-align:center; text-shadow:0 2px 0 rgba(0,0,0,.5);
+  min-height:1.2em;
+}
+
+/* ---- Studio ----------------------------------------------- */
+.studio{display:grid; grid-template-columns:1fr; gap:20px}
+@media(min-width:980px){ .studio{grid-template-columns:minmax(0,400px) 1fr; align-items:start} }
+
+.strip-holder{
+  position:relative; margin:0 auto; touch-action:none; max-width:340px;
+  filter:drop-shadow(0 18px 40px rgba(0,0,0,.55));
+}
+.strip-holder canvas{display:block; width:100%; height:auto; border-radius:8px}
+.sticker-layer{position:absolute; inset:0; overflow:hidden; border-radius:8px}
+
+.sticker{position:absolute; transform-origin:center center; cursor:grab; touch-action:none}
+.sticker img{width:100%; height:100%; display:block; pointer-events:none;
+  filter:drop-shadow(0 3px 6px rgba(0,0,0,.35))}
+.sticker.sel{outline:2.5px dashed var(--parchment); outline-offset:3px}
+.sticker .handle{
+  position:absolute; width:26px; height:26px; border-radius:50%;
+  border:2.5px solid var(--ink); display:none; place-items:center;
+  font-size:13px; line-height:1; font-weight:900; cursor:pointer;
+}
+.sticker.sel .handle{display:grid}
+.sticker .h-scale{right:-13px; bottom:-13px; background:var(--paper); color:var(--bark-deep); cursor:nwse-resize}
+.sticker .h-del{left:-13px; top:-13px; background:var(--tomato); color:#fff}
+
+.tray-tabs{display:flex; gap:7px; flex-wrap:wrap; margin-bottom:12px}
+.tray{
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(74px,1fr)); gap:9px;
+  max-height:320px; overflow-y:auto; padding:4px;
+}
+.tray button{
+  aspect-ratio:1; min-height:0; position:relative; overflow:hidden;
+  background:rgba(255,235,216,.1); border:2.5px solid var(--stone);
+  border-radius:14px; cursor:pointer;
+  transition:transform .1s ease, background .15s ease;
+}
+.tray button:hover{background:rgba(255,235,216,.22); transform:translateY(-2px)}
+.tray button:active{transform:translateY(1px)}
+/* Absolutely positioned so a tall sprite (the rabbit, the whisk) can't push
+   its own tile taller than the square the grid expects — aspect-ratio loses
+   to an in-flow image's intrinsic height. object-fit letterboxes instead. */
+.tray img{
+  position:absolute; inset:7px; width:calc(100% - 14px); height:calc(100% - 14px);
+  object-fit:contain; filter:drop-shadow(0 2px 4px rgba(0,0,0,.4));
+}
+
+.side-panel{display:flex; flex-direction:column; gap:16px}
+.actions{display:flex; flex-wrap:wrap; gap:11px}
+
+.err{
+  background:rgba(232,69,61,.18); border:2.5px solid var(--tomato);
+  border-radius:14px; padding:13px 16px; font-size:14px; line-height:1.55;
+  color:var(--parchment); margin-top:14px; display:none;
+}
+.err.on{display:block}
+.err code{background:rgba(0,0,0,.35); padding:2px 6px; border-radius:5px; font-size:12.5px}
+
+footer{text-align:center; margin-top:32px; font-size:12px; letter-spacing:.14em;
+  font-stretch:condensed; font-weight:800; color:rgba(225,203,176,.55)}
+</style>
+</head>
+<body>
+<div class="backdrop"></div>
+
+<div class="wrap">
+  <header>
+    <img class="logo" src="assets/ui/logo.png" alt="Cook or Cooked">
+    <div class="kicker">PHOTOBOOTH · STEP UP TO THE CLEARING</div>
+  </header>
+
+  <!-- ═══════════════════ SETUP ═══════════════════ -->
+  <section class="screen on" id="s-setup">
+    <div class="setup-grid">
+      <div class="panel">
+        <h2 class="plaque">TODAY'S ORDER</h2>
+        <img class="animals" src="assets/ui/animals.png" alt="">
+        <p class="hint">Gather the crew, pick a strip, and let the woodland kitchen
+          take your picture. Shots go straight onto the printed design.</p>
+        <div class="row" style="margin-top:20px">
+          <button class="pill" id="btn-start">START THE SHOOT</button>
+          <button class="pill cream" id="btn-upload">UPLOAD PHOTOS</button>
+        </div>
+        <input type="file" id="file-input" accept="image/*" multiple hidden>
+        <div class="err" id="cam-err"></div>
+      </div>
+
+      <div class="panel">
+        <h2 class="plaque">SET THE TABLE</h2>
+
+        <fieldset>
+          <legend>Strip design</legend>
+          <div class="frame-tiles" id="frame-choices"></div>
+        </fieldset>
+
+        <fieldset id="fs-shots">
+          <legend>Shots</legend>
+          <div class="choices" id="shot-choices"></div>
+          <div class="note" id="shots-note" hidden></div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Countdown</legend>
+          <div class="choices" id="timer-choices"></div>
+        </fieldset>
+
+        <fieldset id="fs-caption">
+          <legend>Caption</legend>
+          <input type="text" id="caption" maxlength="26" value="COOK OR COOKED"
+                 placeholder="Name your kitchen…">
+        </fieldset>
+
+        <fieldset style="margin-bottom:0">
+          <legend>Mirror</legend>
+          <div class="choices" id="mirror-choices"></div>
+        </fieldset>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════ SHOOT ═══════════════════ -->
+  <section class="screen" id="s-shoot">
+    <div class="stage-wrap">
+      <div class="stage" id="stage">
+        <video id="cam" playsinline autoplay muted></video>
+        <div class="vignette"></div>
+        <div class="countdown" id="countdown">
+          <img src="assets/ui/clock.png" alt="">
+          <div class="num" id="cd-num">3</div>
+        </div>
+        <div class="flash" id="flash"></div>
+      </div>
+      <div class="shot-dots" id="dots"></div>
+      <div class="status" id="shoot-status">GET IN POSITION…</div>
+      <div class="row">
+        <button class="pill basil" id="btn-snap">SNAP THE STRIP</button>
+        <button class="pill ghost small" id="btn-shoot-back">BACK</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════ STUDIO ═══════════════════ -->
+  <section class="screen" id="s-studio">
+    <div class="studio">
+      <div class="panel">
+        <h2 class="plaque">YOUR STRIP</h2>
+        <div class="strip-holder" id="strip-holder">
+          <canvas id="strip"></canvas>
+          <div class="sticker-layer" id="sticker-layer"></div>
+        </div>
+      </div>
+
+      <div class="side-panel">
+        <div class="panel">
+          <h2 class="plaque">GARNISH</h2>
+          <div class="tray-tabs" id="tray-tabs"></div>
+          <div class="tray" id="tray"></div>
+          <p class="hint" style="margin-top:11px">Tap to add · drag to move ·
+            corner knob to resize &amp; spin · red knob to bin it.</p>
+        </div>
+
+        <div class="panel">
+          <h2 class="plaque">PLATE IT UP</h2>
+          <fieldset style="margin-bottom:14px">
+            <legend>Strip design</legend>
+            <div class="frame-tiles" id="frame-choices-2"></div>
+          </fieldset>
+          <div class="actions">
+            <button class="pill basil" id="btn-save">SERVE IT UP</button>
+            <button class="pill ghost small" id="btn-clear">CLEAR GARNISH</button>
+            <button class="pill small" id="btn-again">SHOOT AGAIN</button>
+          </div>
+          <div class="err" id="save-err"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>COOK OR COOKED · LOCAL CO-OP COOKING · MADE IN THE CLEARING</footer>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════
+   Cook or Cooked — Photobooth
+   No dependencies, no network. Everything runs off the game's own
+   art in ./assets.
+
+   Two kinds of strip design:
+     • template — the designed 700×1712 PNGs in assets/strips/.
+       Their photo windows have been punched to transparent, so
+       photos are drawn *underneath* and the art that overlaps a
+       window (paws, the crew, the ruined cake) still sits on top.
+       Window rectangles are baked in below rather than fetched,
+       because fetch() is blocked on file:// pages.
+     • drawn — frames composed here in canvas, kept as plainer
+       alternatives with a caption line.
+   ══════════════════════════════════════════════════════════════ */
+
+const $  = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+
+/* ---------- Palette (mirrors Cooked/Theme.swift) ------------- */
+const C = {
+  cream:'#F7EBD4', tomato:'#E8453D', ink:'#211C1A', basil:'#3D8C52',
+  sand:'#E1CBB0', stone:'#272320', bark:'#645144', barkDeep:'#493A2F',
+  paper:'#FFEBD8', parchment:'#FFEFDF'
+};
+
+/* ---------- Geometry for the drawn frames ------------------- */
+const G = { W:900, pad:38, gap:22, footer:268, photoAspect:4/3 };
+
+/* Swap this file to change where the strips point. Keep it rendered at an
+   exact 2px per module (see tools-punch-windows.py's sibling QR step) or the
+   code turns to mush at the 70px the design gives it. */
+const QR_SRC = 'assets/ui/qr.png';
+
+/* ---------- Strip designs ----------------------------------- */
+const FRAMES = {
+  paws:{
+    kind:'template', label:'PAW PRINTS', src:'assets/strips/strip-1.png',
+    w:700, h:1712, qr:[0,0,70,70],
+    windows:[[51,92,571,371],[22,465,571,371],[53,919,571,371],[36,1296,571,371]]
+  },
+  crew:{
+    kind:'template', label:'THE CREW', src:'assets/strips/strip-2.png',
+    w:700, h:1712, qr:[630,0,70,70],
+    windows:[[64,92,571,372],[64,508,571,372],[64,924,571,372]]
+  },
+  mess:{
+    kind:'template', label:'KITCHEN MESS', src:'assets/strips/strip-3.png',
+    w:700, h:1712, qr:[630,0,70,70],
+    windows:[[64,469,571,371],[64,866,571,371],[64,1263,571,371]]
+  },
+
+  clearing:{
+    kind:'drawn', label:'CLEARING', swatch:'#4E6B3E',
+    bgImage:'assets/frames/forest.png', bgTint:'rgba(22,32,18,.30)',
+    mat:C.cream, matLine:C.stone, matLineW:5,
+    caption:C.parchment, captionLine:C.stone, sub:'rgba(255,239,223,.72)',
+    plaque:'rgba(30,40,26,.55)'
+  },
+  stone:{
+    kind:'drawn', label:'STONE SLAB', swatch:'#6E6A63',
+    bgGrad:['#54504A','#6E6A63','#43403A'],
+    mat:C.sand, matLine:C.stone, matLineW:5,
+    caption:C.sand, captionLine:C.stone, sub:'rgba(225,203,176,.7)',
+    plaque:'rgba(30,28,25,.45)', speckle:true
+  },
+  planks:{
+    kind:'drawn', label:'WOOD PLANKS', swatch:'#645144',
+    bgGrad:['#5C4939','#6E5847','#45362B'],
+    mat:C.paper, matLine:C.stone, matLineW:5,
+    caption:C.parchment, captionLine:C.barkDeep, sub:'rgba(255,235,216,.72)',
+    plaque:'rgba(40,30,22,.35)', grain:true
+  },
+  logo:{
+    kind:'drawn', label:'CREAM & TOMATO', swatch:'#E8453D',
+    bgColor:C.cream, edge:C.tomato, edgeW:16,
+    mat:C.paper, matLine:C.ink, matLineW:5,
+    caption:C.tomato, captionLine:C.ink, sub:'rgba(33,28,26,.6)',
+    plaque:'rgba(232,69,61,.12)'
+  }
+};
+
+/* ---------- Sticker tray ------------------------------------ */
+const TRAY = {
+  'Mess' : ['ruined-cake','messy-chefhat','messy-flour','splash'],
+  'Chefs': ['chef-1','chef-2','chef-3','chef-4','chef-5','chef-6'],
+  'Paws' : ['paw-bear','paw-fox','paw-rabbit','paw-raccoon','paw-squirrel','paw-beaver'],
+  'Food' : ['cake-finished','cake-base','strawberries','strawberry-slices',
+            'bowl-whipped-cream','egg','butter','flour-sack','sugar-sack','cream-jug'],
+  'Tools': ['whisk','knife','hand-mixer','flour-sifter','saucepan','piping-bag',
+            'cake-stand','baking-tray']
+};
+
+/* ---------- State ------------------------------------------- */
+const S = {
+  frame:'crew', shots:3, timer:3, mirror:true,
+  caption:'COOK OR COOKED',
+  photos:[], stickers:[], sel:null, stream:null, busy:false
+};
+
+/* ---------- Image loading ----------------------------------- */
+const pending = new Map();   // src -> Promise
+const sync    = new Map();   // src -> HTMLImageElement, once resolved
+function loadImg(src){
+  if(sync.has(src)) return Promise.resolve(sync.get(src));
+  if(pending.has(src)) return pending.get(src);
+  const p = new Promise((res,rej)=>{
+    const im = new Image();
+    im.onload = ()=>{ sync.set(src,im); res(im); };
+    im.onerror= ()=>rej(new Error('Missing asset: '+src));
+    im.src = src;
+  });
+  pending.set(src,p);
+  return p;
+}
+const imgSync = src => sync.get(src) || null;
+const remember = src => loadImg(src).catch(()=>{});
+
+/* ══════════ Strip spec ══════════ */
+function spec(){
+  const f = FRAMES[S.frame];
+  if(f.kind === 'template'){
+    const [,,ww,wh] = f.windows[0];
+    return { kind:'template', f, W:f.w, H:f.h, windows:f.windows,
+             n:f.windows.length, aspect:ww/wh, exportScale:1 };
+  }
+  const n  = Math.max(1, S.photos.length || S.shots);
+  const pw = G.W - G.pad*2;
+  const ph = Math.round(pw / G.photoAspect);
+  const windows = [];
+  for(let i=0;i<n;i++) windows.push([G.pad, G.pad + i*(ph+G.gap), pw, ph]);
+  return { kind:'drawn', f, W:G.W, H:G.pad+n*ph+(n-1)*G.gap+G.footer,
+           windows, n, aspect:G.photoAspect, exportScale:2 };
+}
+/* How many shots the current design asks for. */
+const shotsWanted = () =>
+  FRAMES[S.frame].kind === 'template' ? FRAMES[S.frame].windows.length : S.shots;
+
+/* ══════════ Option tiles ══════════ */
+const tileGroups = [];
+function registerTiles(host, items, get, set){
+  const build = ()=>{
+    host.innerHTML='';
+    items.forEach(it=>{
+      const b=document.createElement('button');
+      b.className='tile'; b.type='button'; b.dataset.value=String(it.value);
+      b.innerHTML=(it.swatch?`<span class="swatch" style="background:${it.swatch}"></span>`:'')+it.label;
+      b.onclick=()=>{ set(it.value); syncTiles(); };
+      host.appendChild(b);
+    });
+  };
+  build();
+  tileGroups.push({host,get});
+}
+
+/* Frame picker shows the actual strip art as a thumbnail. */
+function registerFrameTiles(host){
+  host.innerHTML='';
+  Object.entries(FRAMES).forEach(([key,f])=>{
+    const b=document.createElement('button');
+    b.className='frame-tile'; b.type='button'; b.dataset.value=key;
+    const thumb = f.kind==='template'
+      ? `background-image:url('${f.src}'); background-color:${key==='paws'?'#E6D8C0':'#42281B'}`
+      : `background:${f.swatch}`;
+    b.innerHTML = `<span class="thumb" style="${thumb}"></span>
+      <span class="cap">${f.label}<br>${(f.kind==='template'?f.windows.length:'—')} ${f.kind==='template'?'SHOTS':''}</span>`;
+    b.onclick = ()=>{ setFrame(key); };
+    host.appendChild(b);
+  });
+  tileGroups.push({host, get:()=>S.frame});
+}
+
+function setFrame(key){
+  S.frame = key;
+  if(FRAMES[key].kind === 'template') S.shots = FRAMES[key].windows.length;
+  syncTiles();
+}
+
+function syncTiles(){
+  tileGroups.forEach(g=>{
+    [...g.host.children].forEach(b=>
+      b.setAttribute('aria-pressed', String(String(g.get())===b.dataset.value)));
+  });
+
+  // A template design fixes its own shot count and carries its own branding,
+  // so the shots and caption controls have nothing to do.
+  const isTpl = FRAMES[S.frame].kind === 'template';
+  $('#shot-choices').hidden = isTpl;
+  $('#shots-note').hidden   = !isTpl;
+  $('#shots-note').textContent =
+    `“${FRAMES[S.frame].label}” is built for ${shotsWanted()} shots — the count follows the design.`;
+  $('#caption').disabled = isTpl;
+  $('#fs-caption').style.opacity = isTpl ? .45 : 1;
+
+  drawStrip();
+}
+
+registerFrameTiles($('#frame-choices'));
+registerFrameTiles($('#frame-choices-2'));
+registerTiles($('#shot-choices'), [
+  {value:3,label:'3 SHOTS'},{value:4,label:'4 SHOTS'},{value:2,label:'2 SHOTS'}
+], ()=>S.shots, v=>{ S.shots=v; S.photos=S.photos.slice(0,v); });
+registerTiles($('#timer-choices'), [
+  {value:3,label:'3 SEC'},{value:5,label:'5 SEC'},{value:1,label:'INSTANT'}
+], ()=>S.timer, v=>S.timer=v);
+registerTiles($('#mirror-choices'), [
+  {value:true,label:'MIRRORED'},{value:false,label:'AS-IS'}
+], ()=>S.mirror, v=>{ S.mirror=v; $('#cam').classList.toggle('mirror', v); });
+
+$('#caption').addEventListener('input', e=>{
+  S.caption = e.target.value.toUpperCase();
+  drawStrip();
+});
+
+/* ══════════ Screens ══════════ */
+function show(id){
+  $$('.screen').forEach(s=>s.classList.remove('on'));
+  $('#'+id).classList.add('on');
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+
+/* ══════════ Camera ══════════ */
+async function startCamera(){
+  const err = $('#cam-err');
+  err.classList.remove('on');
+  try{
+    if(!navigator.mediaDevices?.getUserMedia) throw new Error('insecure context');
+    S.stream = await navigator.mediaDevices.getUserMedia({
+      video:{ width:{ideal:1920}, height:{ideal:1440}, facingMode:'user' }, audio:false
+    });
+    const v = $('#cam');
+    v.srcObject = S.stream;
+    v.classList.toggle('mirror', S.mirror);
+    await v.play().catch(()=>{});
+    $('#stage').style.aspectRatio = spec().aspect;
+    S.photos = [];
+    renderDots();
+    $('#shoot-status').textContent = 'GET IN POSITION…';
+    show('s-shoot');
+  }catch(e){
+    err.innerHTML = location.protocol === 'file:'
+      ? `<b>The camera needs a local server.</b><br>
+         Browsers block the webcam on <code>file://</code> pages. From the
+         <code>Photobooth</code> folder run <code>./start.sh</code>
+         (or <code>python3 -m http.server 8080</code>) and open
+         <code>http://localhost:8080</code>.<br><br>
+         You can still use <b>UPLOAD PHOTOS</b> right now.`
+      : `<b>No camera available.</b> ${e.message||e.name}.
+         Check the browser's camera permission, or use <b>UPLOAD PHOTOS</b> instead.`;
+    err.classList.add('on');
+  }
+}
+function stopCamera(){
+  S.stream?.getTracks().forEach(t=>t.stop());
+  S.stream = null;
+}
+
+function renderDots(){
+  const d = $('#dots'); d.innerHTML='';
+  const total = shotsWanted();
+  for(let i=0;i<total;i++){
+    const s=document.createElement('span');
+    if(i < S.photos.length) s.className='done';
+    else if(i === S.photos.length) s.className='now';
+    d.appendChild(s);
+  }
+}
+
+/* Centre-crop any source to the window shape at window resolution. */
+function cropTo(source, sw, sh, i){
+  const [,,ww,wh] = spec().windows[Math.min(i, spec().windows.length-1)];
+  const target = ww/wh;
+  let cw = sw, ch = sw/target;
+  if(ch > sh){ ch = sh; cw = sh*target; }
+  const cv = document.createElement('canvas');
+  cv.width = ww; cv.height = wh;
+  const cx = cv.getContext('2d');
+  cx.imageSmoothingQuality = 'high';
+  if(source.tagName === 'VIDEO' && S.mirror){ cx.translate(ww,0); cx.scale(-1,1); }
+  cx.drawImage(source, (sw-cw)/2, (sh-ch)/2, cw, ch, 0, 0, ww, wh);
+  return cv;
+}
+
+function grabFrame(i){
+  const v = $('#cam');
+  if(!v.videoWidth || !v.videoHeight) return null;
+  return cropTo(v, v.videoWidth, v.videoHeight, i);
+}
+
+const wait = ms => new Promise(r=>setTimeout(r,ms));
+
+async function runSequence(){
+  if(S.busy) return;
+  S.busy = true;
+  $('#btn-snap').disabled = true;
+  S.photos = [];
+  renderDots();
+
+  const total = shotsWanted();
+  for(let i=0;i<total;i++){
+    $('#shoot-status').textContent = `SHOT ${i+1} OF ${total}`;
+    const cd = $('#countdown'), num = $('#cd-num');
+    cd.classList.add('on');
+    for(let t=S.timer; t>0; t--){
+      num.textContent = t;
+      num.style.animation='none'; void num.offsetWidth; num.style.animation='';
+      await wait(1000);
+    }
+    cd.classList.remove('on');
+
+    const f = $('#flash');
+    f.classList.remove('go'); void f.offsetWidth; f.classList.add('go');
+
+    const shot = grabFrame(i);
+    if(shot) S.photos.push(shot);
+    renderDots();
+    await wait(700);
+  }
+
+  $('#shoot-status').textContent = 'PLATED!';
+  $('#btn-snap').disabled = false;
+  S.busy = false;
+  stopCamera();
+  openStudio();
+}
+
+/* ══════════ Uploads ══════════ */
+$('#btn-upload').onclick = ()=> $('#file-input').click();
+$('#file-input').onchange = async e =>{
+  const files = [...e.target.files].slice(0, shotsWanted());
+  if(!files.length) return;
+  S.photos = [];
+  for(const [i,file] of files.entries()){
+    const url = URL.createObjectURL(file);
+    try{
+      const im = await new Promise((res,rej)=>{
+        const x=new Image(); x.onload=()=>res(x); x.onerror=rej; x.src=url;
+      });
+      S.photos.push(cropTo(im, im.width, im.height, i));
+    }catch{ /* skip anything the browser can't decode */ }
+    URL.revokeObjectURL(url);
+  }
+  e.target.value='';
+  if(S.photos.length) openStudio();
+};
+
+/* ══════════ Rendering ══════════ */
+function roundRect(cx,x,y,w,h,r){
+  cx.beginPath();
+  cx.moveTo(x+r,y);
+  cx.arcTo(x+w,y,x+w,y+h,r);
+  cx.arcTo(x+w,y+h,x,y+h,r);
+  cx.arcTo(x,y+h,x,y,r);
+  cx.arcTo(x,y,x+w,y,r);
+  cx.closePath();
+}
+
+/* Heading text in the game's voice: heavy condensed, stroked. */
+function heading(cx, text, x, y, size, fill, stroke, strokeW){
+  cx.save();
+  cx.font = `900 ${size}px ${getComputedStyle(document.body).fontFamily}`;
+  if('fontStretch' in cx) cx.fontStretch = 'condensed';
+  cx.textAlign='center'; cx.textBaseline='middle';
+  cx.lineJoin='round'; cx.miterLimit=2;
+  if(stroke){ cx.strokeStyle=stroke; cx.lineWidth=strokeW; cx.strokeText(text,x,y); }
+  cx.fillStyle=fill; cx.fillText(text,x,y);
+  cx.restore();
+}
+
+/* paintStrip has to be synchronous so the export path can reuse it —
+   this puts everything it needs in the sync cache first. */
+async function ensureAssets(){
+  const f = FRAMES[S.frame];
+  const need = [];
+  if(f.kind === 'template'){ need.push(f.src); if(f.qr) need.push(QR_SRC); }
+  else { need.push('assets/ui/logo.png'); if(f.bgImage) need.push(f.bgImage); }
+  S.stickers.forEach(s=>need.push(s.src));
+  await Promise.all(need.map(src=>loadImg(src).catch(()=>{})));
+}
+
+function paintStrip(cx, sp, withStickers){
+  const {W,H,windows,f} = sp;
+  cx.clearRect(0,0,W,H);
+
+  if(sp.kind === 'template') paintTemplate(cx, sp);
+  else                       paintDrawn(cx, sp);
+
+  if(withStickers){
+    S.stickers.forEach(st=>{
+      const img = imgSync(st.src);
+      if(!img) return;
+      const w = st.nw*W, h = w*img.height/img.width;
+      cx.save();
+      cx.translate(st.nx*W, st.ny*H);
+      cx.rotate(st.rot);
+      cx.shadowColor='rgba(0,0,0,.4)'; cx.shadowBlur=12; cx.shadowOffsetY=5;
+      cx.drawImage(img, -w/2, -h/2, w, h);
+      cx.restore();
+    });
+  }
+}
+
+function paintTemplate(cx, sp){
+  const {W,H,windows,f} = sp;
+  // Photos go down first; the template art lands on top, so anything the
+  // designer drew over a window edge stays in front of the photo.
+  windows.forEach(([x,y,w,h], i)=>{
+    const p = S.photos[i];
+    if(p) cx.drawImage(p, x, y, w, h);
+    else {
+      cx.fillStyle = 'rgba(73,58,47,.5)';
+      cx.fillRect(x,y,w,h);
+      heading(cx, `SHOT ${i+1}`, x+w/2, y+h/2, 42, 'rgba(255,239,223,.55)', null, 0);
+    }
+  });
+  const tpl = imgSync(f.src);
+  if(tpl) cx.drawImage(tpl, 0, 0, W, H);
+
+  // The QR fills the designer's placeholder box exactly. qr.png is rendered at
+  // 2px per module so it lands 1:1 here — smoothing off keeps every module a
+  // hard square, since a resampled QR is a QR that won't scan.
+  const qr = f.qr && imgSync(QR_SRC);
+  if(qr){
+    cx.save();
+    cx.imageSmoothingEnabled = false;
+    cx.drawImage(qr, f.qr[0], f.qr[1], f.qr[2], f.qr[3]);
+    cx.restore();
+  }
+}
+
+function paintDrawn(cx, sp){
+  const {W,H,windows,f,n} = sp;
+
+  /* ---- background ---- */
+  const bgImg = f.bgImage ? imgSync(f.bgImage) : null;
+  if(bgImg){
+    // The forest plate is wider than it is tall; repeat it down the strip
+    // rather than stretching it, so the trees keep their proportions.
+    const s = Math.max(W/bgImg.width, 1);
+    const tw = bgImg.width*s, th = bgImg.height*s;
+    for(let y=0;y<H;y+=th) cx.drawImage(bgImg, 0,y, tw, th);
+    if(f.bgTint){ cx.fillStyle=f.bgTint; cx.fillRect(0,0,W,H); }
+  } else if(f.bgGrad){
+    const g = cx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0,f.bgGrad[0]); g.addColorStop(.5,f.bgGrad[1]); g.addColorStop(1,f.bgGrad[2]);
+    cx.fillStyle=g; cx.fillRect(0,0,W,H);
+  } else {
+    cx.fillStyle=f.bgColor||C.cream; cx.fillRect(0,0,W,H);
+  }
+
+  if(f.grain){
+    cx.save(); cx.globalAlpha=.16;
+    for(let y=0;y<H;y+=34){ cx.fillStyle=(y/34)%2?'#000':'#fff'; cx.fillRect(0,y,W,2); }
+    cx.globalAlpha=.22; cx.fillStyle='#2b2018';
+    for(let y=0;y<H;y+=176) cx.fillRect(0,y,W,4);
+    cx.restore();
+  }
+  if(f.speckle){
+    cx.save();
+    let seed=7;
+    const rnd=()=> (seed=(seed*1103515245+12345)&0x7fffffff)/0x7fffffff;
+    for(let i=0;i<1400;i++){
+      cx.fillStyle = rnd()>.5 ? 'rgba(255,255,255,.05)' : 'rgba(0,0,0,.07)';
+      cx.fillRect(rnd()*W, rnd()*H, 2+rnd()*3, 2+rnd()*3);
+    }
+    cx.restore();
+  }
+  if(f.edge){
+    cx.strokeStyle=f.edge; cx.lineWidth=f.edgeW;
+    cx.strokeRect(f.edgeW/2, f.edgeW/2, W-f.edgeW, H-f.edgeW);
+    cx.strokeStyle=C.ink; cx.lineWidth=4;
+    cx.strokeRect(f.edgeW+2, f.edgeW+2, W-f.edgeW*2-4, H-f.edgeW*2-4);
+  }
+
+  /* ---- photo mats ---- */
+  windows.forEach(([x,y,pw,ph], i)=>{
+    cx.save();
+    cx.shadowColor='rgba(0,0,0,.45)'; cx.shadowBlur=18; cx.shadowOffsetY=7;
+    cx.fillStyle=f.mat; roundRect(cx,x,y,pw,ph,14); cx.fill();
+    cx.restore();
+
+    cx.save(); roundRect(cx,x+6,y+6,pw-12,ph-12,10); cx.clip();
+    const p = S.photos[i];
+    if(p) cx.drawImage(p, x+6, y+6, pw-12, ph-12);
+    else{
+      cx.fillStyle='rgba(0,0,0,.16)'; cx.fillRect(x+6,y+6,pw-12,ph-12);
+      heading(cx, `SHOT ${i+1}`, W/2, y+ph/2, 46, 'rgba(255,239,223,.4)', null, 0);
+    }
+    cx.restore();
+
+    cx.strokeStyle=f.matLine; cx.lineWidth=f.matLineW;
+    roundRect(cx,x,y,pw,ph,14); cx.stroke();
+  });
+
+  /* ---- footer plaque ---- */
+  const last = windows[windows.length-1];
+  const fy = last[1] + last[3] + 14;
+  const fh = G.footer - 30;
+  cx.save();
+  cx.fillStyle=f.plaque; roundRect(cx, G.pad, fy, W-G.pad*2, fh, 18); cx.fill();
+  cx.restore();
+
+  const logo = imgSync('assets/ui/logo.png');
+  if(logo){
+    const lw = 190, lh = lw*logo.height/logo.width, ly = fy + 20;
+    cx.drawImage(logo, W/2-lw/2, ly, lw, lh);
+    heading(cx, S.caption||'', W/2, ly+lh+40, 36, f.caption, f.captionLine, 6);
+    cx.save();
+    cx.font = `800 20px ${getComputedStyle(document.body).fontFamily}`;
+    cx.textAlign='center'; cx.textBaseline='middle'; cx.fillStyle=f.sub;
+    cx.fillText(dateLine(), W/2, ly+lh+80);
+    cx.restore();
+  }
+}
+
+function dateLine(){
+  return new Date().toLocaleDateString(undefined,
+    {day:'2-digit',month:'short',year:'numeric'}).toUpperCase();
+}
+
+async function drawStrip(){
+  if(!$('#s-studio').classList.contains('on')) return;
+  const sp = spec();
+  const cv = $('#strip');
+  cv.width = sp.W; cv.height = sp.H;
+  await ensureAssets();
+  paintStrip(cv.getContext('2d'), sp, false);
+  layoutStickers();
+}
+
+/* ══════════ Stickers ══════════ */
+let activeTab = Object.keys(TRAY)[0];
+function buildTray(){
+  const tabs = $('#tray-tabs'); tabs.innerHTML='';
+  Object.keys(TRAY).forEach(k=>{
+    const b=document.createElement('button');
+    b.className='pill small '+(k===activeTab?'cream':'ghost');
+    b.textContent=k.toUpperCase();
+    b.onclick=()=>{ activeTab=k; buildTray(); };
+    tabs.appendChild(b);
+  });
+  const tray=$('#tray'); tray.innerHTML='';
+  TRAY[activeTab].forEach(name=>{
+    const src=`assets/stickers/${name}.png`;
+    remember(src);
+    const b=document.createElement('button');
+    b.type='button'; b.title=name.replace(/-/g,' ');
+    const im=document.createElement('img'); im.src=src; im.alt=name;
+    b.appendChild(im);
+    b.onclick=()=>addSticker(src);
+    tray.appendChild(b);
+  });
+}
+
+async function addSticker(src){
+  await loadImg(src);
+  S.stickers.push({ src, nx:.5, ny:.5, nw:.34, rot:0 });
+  S.sel = S.stickers.length-1;
+  layoutStickers();
+}
+
+const clamp = (v,a,b)=>Math.min(b,Math.max(a,v));
+
+function layoutStickers(){
+  const layer = $('#sticker-layer'), cv = $('#strip');
+  const r = cv.getBoundingClientRect();
+  const dw = r.width || cv.clientWidth, dh = r.height || cv.clientHeight;
+  layer.innerHTML='';
+
+  S.stickers.forEach((st,i)=>{
+    const img = imgSync(st.src);
+    const ratio = img ? img.height/img.width : 1;
+    const w = st.nw*dw, h = w*ratio;
+    const el = document.createElement('div');
+    el.className = 'sticker'+(i===S.sel?' sel':'');
+    el.style.cssText =
+      `width:${w}px;height:${h}px;left:${st.nx*dw-w/2}px;top:${st.ny*dh-h/2}px;` +
+      `transform:rotate(${st.rot}rad)`;
+    el.innerHTML = `<img src="${st.src}" alt="">
+      <div class="handle h-del">×</div><div class="handle h-scale">⤡</div>`;
+    layer.appendChild(el);
+
+    el.querySelector('.h-del').addEventListener('pointerdown', e=>{
+      e.stopPropagation();
+      S.stickers.splice(i,1); S.sel=null; layoutStickers();
+    });
+
+    el.addEventListener('pointerdown', e=>{
+      if(e.target.classList.contains('handle')) return;
+      e.preventDefault();
+      S.sel=i; layoutStickers();
+      const box = layer.getBoundingClientRect();
+      const sx=e.clientX, sy=e.clientY, ox=st.nx, oy=st.ny;
+      drag(ev=>{
+        st.nx = clamp(ox+(ev.clientX-sx)/box.width, -.15, 1.15);
+        st.ny = clamp(oy+(ev.clientY-sy)/box.height, -.15, 1.15);
+        layoutStickers();
+      });
+    });
+
+    el.querySelector('.h-scale').addEventListener('pointerdown', e=>{
+      e.preventDefault(); e.stopPropagation();
+      S.sel=i; layoutStickers();
+      const box = layer.getBoundingClientRect();
+      const cxp = box.left + st.nx*box.width, cyp = box.top + st.ny*box.height;
+      const d0 = Math.hypot(e.clientX-cxp, e.clientY-cyp) || 1;
+      const a0 = Math.atan2(e.clientY-cyp, e.clientX-cxp);
+      const w0 = st.nw, r0 = st.rot;
+      drag(ev=>{
+        st.nw  = clamp(w0*(Math.hypot(ev.clientX-cxp, ev.clientY-cyp)/d0), .06, 1.4);
+        st.rot = r0 + (Math.atan2(ev.clientY-cyp, ev.clientX-cxp) - a0);
+        layoutStickers();
+      });
+    });
+  });
+}
+
+function drag(onMove){
+  const up = ()=>{ window.removeEventListener('pointermove',onMove);
+                   window.removeEventListener('pointerup',up); };
+  window.addEventListener('pointermove',onMove);
+  window.addEventListener('pointerup',up);
+}
+
+$('#sticker-layer').addEventListener('pointerdown', e=>{
+  if(e.target.id === 'sticker-layer'){ S.sel=null; layoutStickers(); }
+});
+window.addEventListener('resize', layoutStickers);
+
+/* ══════════ Studio ══════════ */
+async function openStudio(){
+  show('s-studio');
+  buildTray();
+
+  // Say this up front rather than letting someone garnish a strip they will
+  // not be allowed to save.
+  if(location.protocol === 'file:'){
+    const box = $('#save-err');
+    box.innerHTML = `<b>Heads up — saving won't work on this page.</b><br>
+      Opened straight from disk, the browser treats every image as foreign and
+      refuses to export the canvas. Run <code>./start.sh</code> and use
+      <code>http://localhost:8080</code> to get the download (and the camera).`;
+    box.classList.add('on');
+  }
+
+  await drawStrip();
+  setTimeout(drawStrip, 350);   // catch any art that arrived late
+}
+
+/* Local timestamp, not the UTC one toISOString would hand back. */
+function stamp(){
+  const d = new Date(), p = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}` +
+         `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+$('#btn-save').onclick = async ()=>{
+  const btn = $('#btn-save'), box = $('#save-err');
+  box.classList.remove('on');
+  btn.disabled = true;
+  const label = btn.textContent;
+
+  try{
+    const sp = spec(), k = sp.exportScale;
+    const cv = document.createElement('canvas');
+    cv.width = sp.W*k; cv.height = sp.H*k;
+    const cx = cv.getContext('2d');
+    cx.imageSmoothingQuality = 'high';
+    cx.scale(k,k);
+    await ensureAssets();
+    paintStrip(cx, sp, true);
+
+    // toBlob rather than toDataURL: a multi-megabyte data: URL is the kind of
+    // thing browsers quietly refuse to download, and toBlob reports failure
+    // instead of handing back a string that turns out to be unusable.
+    const blob = await new Promise((res,rej)=>{
+      try{ cv.toBlob(b => b ? res(b) : rej(new Error('the canvas produced no image')), 'image/png'); }
+      catch(e){ rej(e); }
+    });
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `cook-or-cooked-${stamp()}.png`;
+    document.body.appendChild(a);   // Safari ignores a click on a detached link
+    a.click();
+    a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 60000);
+
+    btn.textContent = 'SAVED!';
+    setTimeout(()=>{ btn.textContent = label; }, 1600);
+  }catch(e){
+    const tainted = /tainted|security/i.test(`${e.name} ${e.message}`);
+    box.innerHTML = (tainted || location.protocol === 'file:')
+      ? `<b>The browser is blocking the save.</b><br>
+         On a <code>file://</code> page every image counts as foreign, which
+         makes the canvas unexportable — the strip renders fine, but it can
+         never be written out. Serve the folder instead: run
+         <code>./start.sh</code> from <code>Photobooth</code> and open
+         <code>http://localhost:8080</code>. Your shots need retaking after
+         the switch.`
+      : `<b>Couldn't save the strip.</b> ${e.name}: ${e.message}`;
+    box.classList.add('on');
+  }finally{
+    btn.disabled = false;
+  }
+};
+
+$('#btn-clear').onclick = ()=>{ S.stickers=[]; S.sel=null; layoutStickers(); };
+$('#btn-again').onclick = ()=>{ S.stickers=[]; S.sel=null; S.photos=[]; show('s-setup'); };
+$('#btn-start').onclick = startCamera;
+$('#btn-snap').onclick  = runSequence;
+$('#btn-shoot-back').onclick = ()=>{ stopCamera(); show('s-setup'); };
+
+/* ══════════ Boot ══════════ */
+['assets/ui/logo.png','assets/ui/clock.png','assets/ui/animals.png', QR_SRC,
+ ...Object.values(FRAMES).map(f=>f.src||f.bgImage).filter(Boolean)
+].forEach(remember);
+Object.values(TRAY).flat().forEach(n=>remember(`assets/stickers/${n}.png`));
+
+syncTiles();
+buildTray();
+window.addEventListener('beforeunload', stopCamera);
+</script>
+</body>
+</html>

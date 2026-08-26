@@ -16,6 +16,7 @@ struct KitchenNameView: View {
     @State private var kitchenName = ""
     @State private var chefCount: Int? = nil
     @State private var showWaitingRoom = false
+    @State private var showSettings = false
     @FocusState private var nameFocused: Bool
 
     private let chefOptions = [2, 3, 4]
@@ -65,7 +66,8 @@ struct KitchenNameView: View {
                         cornerButton("back-button", label: "Back") { dismiss() }
                         Spacer()
                         cornerButton("settings-button", label: "Settings") {
-                            // Dud for now — no settings screen yet
+                            nameFocused = false
+                            showSettings = true
                         }
                     }
                     Spacer()
@@ -78,6 +80,9 @@ struct KitchenNameView: View {
                 // Hand off to the team's real flow: their NumberOfPlayersView
                 // creates the multiplayer host session.
                 NumberOfPlayersView(kitchenName: trimmedName)
+            }
+            .fullScreenCover(isPresented: $showSettings) {
+                SettingsView()
             }
         }
         .ignoresSafeArea()

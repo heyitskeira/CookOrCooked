@@ -50,8 +50,10 @@ final class Music: ObservableObject {
 
     // MARK: Tuning
 
-    /// Playing volume. Not 1.0 — this is background music for a game where the
-    /// players need to hear each other count down to a serve.
+    /// Playing volume at the top of the slider. Not 1.0 — this is background
+    /// music for a game where the players need to hear each other count down to
+    /// a serve. The settings slider scales this rather than replacing it, so
+    /// "100%" stays the level the mix was tuned at.
     private let fullVolume: Float = 0.55
 
     /// Volume while the microphone is open. Not zero: total silence mid-match
@@ -71,12 +73,31 @@ final class Music: ObservableObject {
     /// again every launch.
     @Published var isMuted: Bool {
         didSet {
+            guard oldValue != isMuted else { return }
             UserDefaults.standard.set(isMuted, forKey: Self.muteKey)
             applyMute()
         }
     }
 
+    /// Where the settings slider sits, 0...1. Scales `fullVolume`; it does not
+    /// replace it, so 1.0 is the tuned mix level and not a raw 100%.
+    ///
+    /// Mute is kept as its own flag rather than being folded into "volume == 0"
+    /// because they answer different questions. Sliding to zero and coming back
+    /// should return you to where you were, and something that mutes the app
+    /// from outside this screen must not destroy the player's chosen level.
+    @Published var volume: Double {
+        didSet {
+            let clamped = min(max(volume, 0), 1)
+            if clamped != volume { volume = clamped; return }
+            guard oldValue != volume else { return }
+            UserDefaults.standard.set(volume, forKey: Self.volumeKey)
+            applyVolume()
+        }
+    }
+
     private static let muteKey = "music.muted"
+    private static let volumeKey = "music.volume"
 
     private var players: [Track: AVAudioPlayer] = [:]
     private(set) var current: Track?
@@ -91,6 +112,9 @@ final class Music: ObservableObject {
 
     private init() {
         isMuted = UserDefaults.standard.bool(forKey: Self.muteKey)
+        // `double(forKey:)` returns 0 for a key that was never written, which
+        // would launch a first-time player into silence. Absent means full.
+        volume = UserDefaults.standard.object(forKey: Self.volumeKey) as? Double ?? 1.0
     }
 
     // MARK: Session
@@ -246,11 +270,24 @@ final class Music: ObservableObject {
 
     private var targetVolume: Float {
         if isMuted { return 0 }
-        return isDucked ? duckedVolume : fullVolume
+        return (isDucked ? duckedVolume : fullVolume) * Float(volume)
     }
 
     private var currentPlayer: AVAudioPlayer? {
         current.flatMap { players[$0] }
+    }
+
+    /// Live-update the level while the settings slider is being dragged.
+    ///
+    /// Set directly, no fade: a ramp on every value change turns a drag into a
+    /// queue of overlapping fades and the volume lags the thumb.
+    ///
+    /// The player keeps running at zero rather than stopping. Stopping and
+    /// restarting on each end of the slider would restart the loop from the
+    /// top, so dragging past zero and back would jump the music.
+    private func applyVolume() {
+        guard !isMuted else { return }
+        currentPlayer?.volume = targetVolume
     }
 
     private func applyMute() {

@@ -4,21 +4,23 @@
 //
 //  Today's Order — the screen between the lobby and the kitchen.
 //
-//  Two screens live in this one file on purpose, because they are the same
-//  book seen from two sides of the table:
+//  Three screens live in this one file on purpose, because they are the same
+//  book seen from different sides of the table:
 //
 //    • The head chef gets the written order and the START signpost. Only they
 //      can open the kitchen, and only they can read a step's instructions.
 //    • Everyone else gets a closed book: "waiting for head chef reading the
 //      order's recipe". That asymmetry is the point — the head chef has to
 //      talk, and the kitchen has to listen.
+//    • Tapping a step turns the page to `StepDetailView`, which is the same
+//      book showing one step's card and what it needs.
 //
 //  Nothing here is on a clock. `KitchenSession.beginCooking()` is what starts
 //  the timer, and it is wired to the signpost.
 //
-//  All artwork is placeholder. `ArtIcon` (RecipeBook.swift) picks up a real
-//  imageset the moment one is named after the ingredient id, and the two
-//  backdrops below do the same via `namedImage`.
+//  The artwork and every measurement that places it live in `RecipeArt.swift`.
+//  Nothing in this file knows a pixel size; it asks `BookLayout` where things
+//  go, so the same code draws the book correctly on any screen.
 //
 
 import SwiftUI
@@ -34,47 +36,53 @@ struct RecipeBookView: View {
     /// Leaving kills the kitchen for everyone, so it asks first.
     @State private var confirmLeave = false
 
+    /// The step whose page is open, if any. Held here rather than inside the
+    /// spread because the banner and the START signpost have to get out of the
+    /// way while a step is being read.
+    @State private var openStep: BookStep?
+
     private var isHeadChef: Bool { headChefOverride ?? session.isHeadChef }
 
     // MARK: Body
 
     var body: some View {
-        GeometryReader { geo in
-            let compact = geo.size.height < 420
+        ZStack {
+            backdrop
 
-            ZStack {
-                backdrop
-
-                VStack(spacing: compact ? 8 : 14) {
-                    banner(compact: compact)
-                    RecipeSpreadView(session: session, headChefOverride: headChefOverride, compact: compact)
-                }
-                .padding(.horizontal, compact ? 76 : 96)
-                .padding(.vertical, compact ? 10 : 18)
-
-                corners
-
-                // The host can vanish while the book is open — and this is the
-                // longest pre-game pause there is, so it will happen. Without
-                // this the screen just says "head chef is reading…" forever.
-                //
-                // The clock has not started yet, so nothing is being lost while
-                // we wait; the freeze still matters because the head chef is
-                // the host, and without them nobody can press START.
-                // Closed before frozen, for the same reason as in the kitchen:
-                // only one of the two has a way out on it.
-                if let closed = closedReason {
-                    KitchenClosedOverlay(reason: closed, onDone: leaveKitchen)
-                } else if session.isFrozen {
-                    PausedOverlay(session: session, onLeave: leaveKitchen)
-                } else if let player = session.localPlayer, !player.isConnected {
-                    statusBanner("Reconnecting…")
-                }
+            if let step = openStep {
+                StepDetailView(step: step)
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .scale(scale: 0.94)),
+                        removal:   .opacity.combined(with: .scale(scale: 0.98))))
+            } else {
+                spreadPage
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .scale(scale: 0.98)),
+                        removal:   .opacity.combined(with: .scale(scale: 0.94))))
             }
-            // Note: only the backdrop ignores the safe area. The phone is
-            // landscape-only, so a full-bleed ZStack would put the back button
-            // under the sensor housing and START under the home indicator.
+
+            corners
+
+            // The host can vanish while the book is open — and this is the
+            // longest pre-game pause there is, so it will happen. Without
+            // this the screen just says "head chef is reading…" forever.
+            //
+            // The clock has not started yet, so nothing is being lost while
+            // we wait; the freeze still matters because the head chef is
+            // the host, and without them nobody can press START.
+            // Closed before frozen, for the same reason as in the kitchen:
+            // only one of the two has a way out on it.
+            if let closed = closedReason {
+                KitchenClosedOverlay(reason: closed, onDone: leaveKitchen)
+            } else if session.isFrozen {
+                PausedOverlay(session: session, onLeave: leaveKitchen)
+            } else if let player = session.localPlayer, !player.isConnected {
+                statusBanner("Reconnecting…")
+            }
         }
+        // Note: only the backdrop ignores the safe area. The phone is
+        // landscape-only, so a full-bleed ZStack would put the back button
+        // under the sensor housing and START under the home indicator.
         .confirmationDialog("Leave this kitchen?",
                             isPresented: $confirmLeave, titleVisibility: .visible) {
             // The host says goodbye properly. Without it the guests can't tell
@@ -89,38 +97,48 @@ struct RecipeBookView: View {
                  ? "You're the head chef — leaving closes the kitchen for everyone."
                  : "You'll drop out of this order.")
         }
-        .onAppear {
-            #if DEBUG
-            // The book is the promise; the rules engine is the delivery. If a
-            // step has no action behind it, players will hunt the map for
-            // something that cannot happen — on a two-minute clock.
-            let orphans = RecipeBook.stepsWithNoAction
-            if !orphans.isEmpty {
-                print("⚠️ RecipeBook: no action behind step(s) " +
-                      orphans.map { "#\($0.number) \($0.title)" }.joined(separator: ", "))
-            }
-            // Same failure, one step further in: the action exists, but not at
-            // the counter the page names. The chef walks to the wrong station
-            // and finds the step isn't offered there.
-            let misplaced = RecipeBook.stepsAtWrongStation
-            if !misplaced.isEmpty {
-                print("⚠️ RecipeBook: wrong station on " +
-                      misplaced.map { "#\($0.step.number) \($0.step.title) " +
-                                      "(book: \($0.step.station.displayName), " +
-                                      "kitchen: \($0.actual.displayName))" }
-                              .joined(separator: ", "))
-            }
-            // And the third copy of the same facts: the rules engine's own
-            // table of recipes. All three have to name the same counter.
-            let drifted = RecipeBook.recipesAtWrongStation
-            if !drifted.isEmpty {
-                print("⚠️ RecipeBook: rules engine has " +
-                      drifted.map { "\($0.recipe.name) at \($0.recipe.station.displayName) " +
-                                    "(kitchen: \($0.actual.displayName))" }
-                             .joined(separator: ", "))
-            }
-            #endif
+        .onAppear(perform: auditBook)
+        // Only the head chef can read a step. If that moves — host migration,
+        // or a changed override in a preview — a guest would otherwise be left
+        // stranded on a page they are no longer allowed to be on, with the
+        // spread behind it showing the waiting message.
+        .onChange(of: isHeadChef) { _, chef in
+            if !chef { openStep = nil }
         }
+    }
+
+    /// The pre-start page: "TODAY'S ORDER" on its plank, with the open book
+    /// below it.
+    ///
+    /// Stacked rather than overlaid. The banner is a solid wooden sign across
+    /// nearly its whole height, so hanging it over the book would bury the top
+    /// third of "STRAWBERRY SHORTCAKE". The mockup gives the sign its own band
+    /// and lets the book take what's left, which is why the book reads smaller
+    /// here than it does as the mid-match overlay.
+    private var spreadPage: some View {
+        GeometryReader { geo in
+            let bannerWidth = geo.size.width * BookArt.bannerWidthFraction
+
+            VStack(spacing: 6) {
+                Image(BookArt.banner)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: bannerWidth,
+                           height: bannerWidth / BookArt.bannerAspect)
+                    .accessibilityLabel("Today's order")
+
+                RecipeSpreadView(session: session,
+                                 headChefOverride: headChefOverride,
+                                 openStep: $openStep)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+    }
+
+    private func closeStep() {
+        withAnimation(.easeInOut(duration: 0.28)) { openStep = nil }
     }
 
     /// Out of the book and all the way back to the start screen. Mirrors
@@ -162,91 +180,72 @@ struct RecipeBookView: View {
 
     // MARK: Backdrop
 
+    /// Framed and clipped rather than a bare `.scaledToFill()`. Fill mode can
+    /// report a layout size larger than it was offered, which would grow the
+    /// enclosing stack — invisible on a phone, where the art's proportions
+    /// almost exactly match the screen, but a large overflow on an iPad.
     private var backdrop: some View {
-        ZStack {
-            if let art = namedImage("woods-clearing-art") {
-                Image(uiImage: art)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                LinearGradient(colors: [Color(red: 0.24, green: 0.32, blue: 0.26),
-                                        Color(red: 0.14, green: 0.20, blue: 0.16)],
-                               startPoint: .top, endPoint: .bottom)
-            }
+        GeometryReader { geo in
+            Image("woods-clearing-art")
+                .resizable()
+                .scaledToFill()
+                .frame(width: geo.size.width, height: geo.size.height)
+                .clipped()
         }
         .ignoresSafeArea()
-    }
-
-    // MARK: Banner
-
-    private func banner(compact: Bool) -> some View {
-        Text("TODAY'S ORDER")
-            .font(.system(size: compact ? 26 : 34, weight: .heavy, design: .rounded))
-            .foregroundStyle(AppTheme.cream)
-            .shadow(color: .black.opacity(0.45), radius: 0, x: 0, y: 3)
-            .padding(.horizontal, 44)
-            .padding(.vertical, compact ? 8 : 12)
-            .background(plank)
-    }
-
-    private var plank: some View {
-        ZStack {
-            if let art = namedImage("trunk-planks") {
-                Image(uiImage: art).resizable().scaledToFill()
-            } else {
-                Color(red: 0.45, green: 0.31, blue: 0.19)
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color(red: 0.28, green: 0.18, blue: 0.10), lineWidth: 4)
-        )
-        .shadow(color: .black.opacity(0.35), radius: 8, x: 0, y: 5)
     }
 
     // MARK: Back button and signpost
 
     private var corners: some View {
-        VStack {
-            HStack {
-                backButton
-                Spacer()
-            }
-            Spacer()
-            HStack {
-                Spacer()
-                startControl
-            }
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
-    }
+        ZStack(alignment: .topLeading) {
+            backButton
 
-    private var backButton: some View {
-        // Only `session.leave()` — no `dismiss()`. The waiting room is watching
-        // for `.idle` and closes this cover itself; doing both would tear down
-        // two stacked covers in the same update and wedge the presentation.
-        Button {
-            confirmLeave = true
-        } label: {
-            ZStack {
-                if let art = namedImage("back-button") {
-                    Image(uiImage: art).resizable().scaledToFit()
-                } else {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color(red: 0.45, green: 0.31, blue: 0.19))
-                        .overlay(
-                            Image(systemName: "arrow.uturn.backward")
-                                .font(.system(size: 22, weight: .heavy))
-                                .foregroundStyle(AppTheme.cream)
-                        )
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    // While a step's page is open the only move is back to the
+                    // list, so START is put away rather than left live
+                    // underneath.
+                    if openStep == nil { startControl }
                 }
             }
-            .frame(width: 56, height: 56)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Leave kitchen")
+    }
+
+    /// The hanging back sign, positioned by where its plaque should land.
+    ///
+    /// The artwork is a plaque on a trunk, and the trunk is drawn running up
+    /// out of the frame — so the image is hung above the top of the container
+    /// and clipped there, exactly as the mockups show it. Only the plaque is
+    /// tappable; the trunk is scenery.
+    private var backButton: some View {
+        GeometryReader { geo in
+            let height = geo.size.height * BookArt.backSignHeight
+            let width  = height * BookArt.backSignAspect
+
+            Button {
+                // From a step's page, back means "close the step". From the
+                // list it means leaving, which takes the whole kitchen with
+                // it — so only that one asks first.
+                if openStep != nil { closeStep() } else { confirmLeave = true }
+            } label: {
+                Image(BookArt.backSign)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: width, height: height)
+                    .contentShape(BackSignPlaque())
+            }
+            .buttonStyle(.plain)
+            .offset(x: BookArt.backSignLeadingInset,
+                    y: geo.size.height * BookArt.backSignPlaqueTop
+                        - height * BookArt.backSignPlaqueStart)
+            .accessibilityLabel(openStep == nil ? "Leave kitchen"
+                                                : "Back to the recipe")
+        }
     }
 
     @ViewBuilder
@@ -281,10 +280,44 @@ struct RecipeBookView: View {
         }
     }
 
-    // MARK: Art lookup
+    // MARK: Debug audits
 
-    /// Real artwork if the imageset exists, nil to fall back to a drawn stand-in.
-    private func namedImage(_ name: String) -> UIImage? { FoodArt.art(name) }
+    private func auditBook() {
+        #if DEBUG
+        // The artwork half: imagesets that don't exist, or that were
+        // re-exported at a size the layout wasn't measured against.
+        BookArt.auditArtwork()
+
+        // The book is the promise; the rules engine is the delivery. If a
+        // step has no action behind it, players will hunt the map for
+        // something that cannot happen — on a two-minute clock.
+        let orphans = RecipeBook.stepsWithNoAction
+        if !orphans.isEmpty {
+            print("⚠️ RecipeBook: no action behind step(s) " +
+                  orphans.map { "#\($0.number) \($0.title)" }.joined(separator: ", "))
+        }
+        // Same failure, one step further in: the action exists, but not at
+        // the counter the page names. The chef walks to the wrong station
+        // and finds the step isn't offered there.
+        let misplaced = RecipeBook.stepsAtWrongStation
+        if !misplaced.isEmpty {
+            print("⚠️ RecipeBook: wrong station on " +
+                  misplaced.map { "#\($0.step.number) \($0.step.title) " +
+                                  "(book: \($0.step.station.displayName), " +
+                                  "kitchen: \($0.actual.displayName))" }
+                          .joined(separator: ", "))
+        }
+        // And the third copy of the same facts: the rules engine's own
+        // table of recipes. All three have to name the same counter.
+        let drifted = RecipeBook.recipesAtWrongStation
+        if !drifted.isEmpty {
+            print("⚠️ RecipeBook: rules engine has " +
+                  drifted.map { "\($0.recipe.name) at \($0.recipe.station.displayName) " +
+                                "(kitchen: \($0.actual.displayName))" }
+                         .joined(separator: ", "))
+        }
+        #endif
+    }
 }
 
 // MARK: - The book's pages, on their own
@@ -298,270 +331,222 @@ struct RecipeBookView: View {
 struct RecipeSpreadView: View {
 
     @ObservedObject var session: KitchenSession
+
     /// Previews and on-device testing only — see the same property on
     /// `RecipeBookView`.
     var headChefOverride: Bool?
-    var compact: Bool = false
 
-    /// The step whose instruction card is open, if any.
-    @State private var openStep: BookStep?
+    /// The step whose page is open. Owned by whoever presents the spread,
+    /// because opening a step changes what else belongs on their screen.
+    @Binding var openStep: BookStep?
 
     private var isHeadChef: Bool { headChefOverride ?? session.isHeadChef }
 
     var body: some View {
-        ZStack {
-            HStack(spacing: 0) {
-                page {
-                    if isHeadChef { headChefPage(RecipeBook.leftPage, compact: compact) }
-                    else { waitingPage }
+        BookCanvas { layout in
+            if isHeadChef {
+                Image(BookArt.title)
+                    .resizable()
+                    .scaledToFit()
+                    .placed(BookArt.titleRect, in: layout)
+                    .accessibilityLabel(RecipeBook.orderTitle)
+
+                ForEach(RecipeBook.steps) { step in
+                    stepRow(step, layout: layout)
                 }
 
-                // The spine. A seam of shadow does more for "this is a book" than
-                // any amount of page curl.
-                LinearGradient(colors: [.clear, AppTheme.ink.opacity(0.35), .clear],
-                               startPoint: .leading, endPoint: .trailing)
-                    .frame(width: 22)
-
-                page {
-                    if isHeadChef { headChefPage(RecipeBook.rightPage, compact: compact) }
-                    else { dottedLines(count: 8) }
-                }
-            }
-            .padding(compact ? 12 : 18)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color(red: 0.45, green: 0.31, blue: 0.19))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color(red: 0.28, green: 0.18, blue: 0.10), lineWidth: 5)
-            )
-            .shadow(color: .black.opacity(0.4), radius: 14, x: 0, y: 8)
-
-            if let step = openStep {
-                InstructionCard(step: step) {
-                    withAnimation(.easeOut(duration: 0.15)) { openStep = nil }
-                }
-                .transition(.opacity.combined(with: .scale(scale: 0.94)))
+                hint(layout: layout)
+            } else {
+                waitingPage(layout: layout)
             }
         }
     }
 
-    private func page<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        content()
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color(red: 0.96, green: 0.91, blue: 0.80))
-            )
-    }
+    // MARK: A step
 
-    // MARK: Head chef's page
-
-    private func headChefPage(_ steps: [BookStep], compact: Bool) -> some View {
-        VStack(alignment: .leading, spacing: compact ? 5 : 7) {
-            // The recipe's name sits over the left-hand page, as in the mockup.
-            if steps.first?.number == 1 {
-                Text(RecipeBook.orderTitle.uppercased())
-                    .font(.system(size: compact ? 17 : 21, weight: .heavy, design: .rounded))
-                    .foregroundStyle(AppTheme.tomato)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    .padding(.bottom, 2)
-            }
-
-            ForEach(steps) { step in
-                stepRow(step, compact: compact)
-            }
-
-            Spacer(minLength: 0)
-        }
-    }
-
-    private func stepRow(_ step: BookStep, compact: Bool) -> some View {
+    /// One tappable line. The whole row is a single piece of artwork, so the
+    /// button's job is only to place it, grow it under a finger, and hand the
+    /// step back up.
+    private func stepRow(_ step: BookStep, layout: BookLayout) -> some View {
         Button {
-            withAnimation(.easeOut(duration: 0.15)) { openStep = step }
+            withAnimation(.easeInOut(duration: 0.28)) { openStep = step }
         } label: {
-            HStack(spacing: 8) {
-                Text("\(step.number)")
-                    .font(.system(size: compact ? 22 : 26, weight: .heavy, design: .rounded))
-                    .foregroundStyle(AppTheme.tomato)
-                    .frame(width: compact ? 26 : 32, alignment: .leading)
-
-                ArtIcon(id: step.output, size: compact ? 20 : 24)
-
-                Text(step.title)
-                    .font(.system(size: compact ? 13 : 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(AppTheme.ink)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, compact ? 3 : 5)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color(red: 0.93, green: 0.87, blue: 0.74))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(AppTheme.ink.opacity(0.18), lineWidth: 1.5)
-            )
+            Image(BookArt.row(step.number))
+                .resizable()
+                .scaledToFit()
         }
-        .buttonStyle(.plain)
+        .buttonStyle(StepRowButtonStyle())
+        .placed(BookArt.rowRect(step.number), in: layout)
+        .accessibilityLabel("Step \(step.number), \(step.title)")
+        .accessibilityHint("Opens this step's instructions")
+    }
+
+    /// "☝ a step for more instructions" — the only text on the spread that
+    /// isn't part of the artwork, because it belongs to the interaction rather
+    /// than the recipe.
+    private func hint(layout: BookLayout) -> some View {
+        HStack(spacing: layout.height(0.012)) {
+            Image(systemName: "hand.point.up.left.fill")
+                .font(.system(size: layout.height(0.038), weight: .semibold))
+            Text("a step for more instructions")
+                .font(.system(size: layout.height(0.036), weight: .semibold,
+                              design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+        }
+        .foregroundStyle(AppTheme.ink.opacity(0.62))
+        .placed(BookArt.hintRect, in: layout)
+        .accessibilityHidden(true)
     }
 
     // MARK: Everyone else's page
 
-    private var waitingPage: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Waiting for head chef reading the order's recipe")
-                .font(.system(size: 19, weight: .bold, design: .rounded))
-                .foregroundStyle(AppTheme.ink.opacity(0.75))
-                .fixedSize(horizontal: false, vertical: true)
+    /// A blank spread: the message on the first two lines of the left page,
+    /// and ruled lines everywhere the recipe would be. The rules are on one
+    /// grid across both pages, so the message reads as written *on* the page
+    /// rather than floating over it.
+    @ViewBuilder
+    private func waitingPage(layout: BookLayout) -> some View {
+        Text("Wait for the head chef\nto explain the recipe")
+            // The mockup's lettering is condensed; SF Rounded is not, so the
+            // size is set to match the *width* the artist gave the line rather
+            // than its cap height, which would overrun the page.
+            .font(.system(size: layout.height(0.046), weight: .bold,
+                          design: .rounded))
+            .foregroundStyle(AppTheme.ink.opacity(0.82))
+            .multilineTextAlignment(.leading)
+            .lineSpacing(layout.height(0.018))
+            .lineLimit(2)
+            .minimumScaleFactor(0.5)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .placed(BookArt.guestMessageRect, in: layout)
 
-            dottedLines(count: 6)
+        // The left page gives its first lines to the message; the right page
+        // is ruled all the way down.
+        ForEach(BookArt.ruleLeftFirstIndex..<BookArt.ruleCount, id: \.self) { row in
+            rule(row: row, onLeft: true, layout: layout)
+        }
+        ForEach(0..<BookArt.ruleCount, id: \.self) { row in
+            rule(row: row, onLeft: false, layout: layout)
         }
     }
 
-    private func dottedLines(count: Int) -> some View {
-        VStack(spacing: 0) {
-            ForEach(0..<count, id: \.self) { _ in
-                DottedRule()
-                    .stroke(style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [1, 9]))
-                    .foregroundStyle(AppTheme.ink.opacity(0.35))
-                    .frame(height: 1)
-                    .frame(maxHeight: .infinity)
-            }
-        }
-        .frame(maxHeight: .infinity)
+    private func rule(row: Int, onLeft: Bool, layout: BookLayout) -> some View {
+        let dot = layout.height(BookArt.ruleDotSize)
+
+        return DottedRule()
+            .stroke(style: StrokeStyle(lineWidth: dot, lineCap: .round,
+                                       dash: [0.01, layout.rect.width
+                                                    * BookArt.ruleDotPitch]))
+            .foregroundStyle(AppTheme.ink.opacity(0.55))
+            .placed(BookRect(x: onLeft ? BookArt.ruleX.left : BookArt.ruleX.right,
+                             y: BookArt.ruleY(row) - BookArt.ruleDotSize / 2,
+                             w: onLeft ? BookArt.ruleWidth.left
+                                       : BookArt.ruleWidth.right,
+                             h: BookArt.ruleDotSize),
+                    in: layout)
+            .accessibilityHidden(true)
     }
 }
 
-// MARK: - The instruction card (image + image = image)
+// MARK: - One step, on its own page
 
-/// One step, spelled out the way the kitchen actually works: everything that
-/// goes in, the tool you must be holding, and the one thing that comes out.
-private struct InstructionCard: View {
+/// The step-detail screen: the same open book, showing what this step is on
+/// the left and what it takes on the right.
+///
+/// Both halves are single pieces of artwork, so this view is almost entirely
+/// placement. Leaving is the presenter's job — on the pre-game screen the
+/// corner sign already knows to close the step rather than leave the kitchen,
+/// and mid-match the overlay's own button does it.
+///
+/// Deliberately *not* tap-to-dismiss. This is a page to be read, often while
+/// the head chef reads it aloud, so a stray finger anywhere on it used to
+/// throw the reader back to the list mid-sentence. Taps are swallowed rather
+/// than ignored, so they don't reach whatever is behind the page either.
+struct StepDetailView: View {
 
     let step: BookStep
-    let onClose: () -> Void
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.55)
-                .ignoresSafeArea()
-                .onTapGesture(perform: onClose)
+        BookCanvas { layout in
+            Image(BookArt.card(step.number))
+                .resizable()
+                .scaledToFit()
+                .placed(BookArt.cardRect(step.number), in: layout)
+                .accessibilityLabel("Step \(step.number): \(step.title)")
 
-            VStack(spacing: 14) {
-                header
-                equation
-                footnotes
-                Text("Tap anywhere to close")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(AppTheme.ink.opacity(0.4))
-            }
-            .padding(.horizontal, 26)
-            .padding(.vertical, 20)
-            .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(Color(red: 0.96, green: 0.91, blue: 0.80))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(Color(red: 0.45, green: 0.31, blue: 0.19), lineWidth: 5)
-            )
-            .shadow(color: .black.opacity(0.4), radius: 18, x: 0, y: 10)
-            .padding(.horizontal, 40)
-            .onTapGesture(perform: onClose)
+            Image(BookArt.instructions(step.number))
+                .resizable()
+                .scaledToFit()
+                .placed(BookArt.instructionsRect(step.number), in: layout)
+                .accessibilityLabel(requirementsDescription)
         }
+        .contentShape(Rectangle())
+        .onTapGesture { /* swallowed — only the back button leaves */ }
     }
 
-    private var header: some View {
-        VStack(spacing: 2) {
-            Text("STEP \(step.number) OF \(RecipeBook.steps.count)")
-                .font(.system(size: 11, weight: .heavy, design: .rounded))
-                .tracking(1.4)
-                .foregroundStyle(AppTheme.ink.opacity(0.45))
-
-            Text(step.title)
-                .font(.system(size: 24, weight: .heavy, design: .rounded))
-                .foregroundStyle(AppTheme.tomato)
+    /// What the artwork says, for anyone who can't see it.
+    private var requirementsDescription: String {
+        // `FoodArt.name` capitalises each id on its own, which reads as
+        // "requires Raw dough and Hot oven" mid-sentence. Only the first stays
+        // capitalised.
+        let inputs = step.inputs.enumerated().map { index, id in
+            index == 0 ? FoodArt.name(id) : FoodArt.name(id).lowercased()
         }
+        let needs = inputs.isEmpty ? "nothing" : inputs.joined(separator: " and ")
+        let tool = step.utensil.map { ", using the \(FoodArt.name($0).lowercased())" } ?? ""
+        return "This step requires \(needs)\(tool). "
+             + "It must be completed at the \(step.stationLabel)."
+    }
+}
+
+// MARK: - Press and hover feedback
+
+/// Grows a step row when a finger is on it, and — on iPad with a pointer, or
+/// the Mac — when one hovers over it.
+///
+/// The amounts are deliberately small. Rows sit about 14% of their own height
+/// apart, so anything past roughly 1.12 makes a pressed row collide with its
+/// neighbours instead of reading as lifted.
+struct StepRowButtonStyle: ButtonStyle {
+
+    func makeBody(configuration: Configuration) -> some View {
+        RowBody(configuration: configuration)
     }
 
-    /// The whole point of the page: ingredient + ingredient = result.
-    private var equation: some View {
-        HStack(alignment: .center, spacing: 8) {
-            if step.inputs.isEmpty {
-                // Pre-heating takes nothing in — say so rather than showing an
-                // empty left side that reads like a bug.
-                Text("nothing")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(AppTheme.ink.opacity(0.45))
-                    .frame(width: 64)
-            } else {
-                ForEach(Array(step.inputs.enumerated()), id: \.offset) { index, id in
-                    if index > 0 { symbol("+") }
-                    tile(id)
-                }
-            }
+    /// A nested view because a `ButtonStyle` is a value type and cannot hold
+    /// `@State` of its own, and hover is state. Named `RowBody` rather than
+    /// `Body` so it can't be mistaken for `ButtonStyle`'s own associated type.
+    private struct RowBody: View {
 
-            symbol("=")
+        let configuration: ButtonStyleConfiguration
 
-            tile(step.output, highlight: true)
+        @State private var hovering = false
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+        var body: some View {
+            configuration.label
+                .scaleEffect(scale)
+                .shadow(color: .black.opacity(lifted ? 0.28 : 0),
+                        radius: lifted ? 10 : 0, x: 0, y: lifted ? 5 : 0)
+                .animation(motion, value: scale)
+                .onHover { hovering = $0 }
         }
-    }
 
-    private func tile(_ id: String, highlight: Bool = false) -> some View {
-        VStack(spacing: 5) {
-            ArtIcon(id: id, size: highlight ? 56 : 46)
-            Text(FoodArt.name(id))
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(AppTheme.ink.opacity(0.65))
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-                .frame(width: 66)
+        private var lifted: Bool { hovering || configuration.isPressed }
+
+        private var scale: CGFloat {
+            if configuration.isPressed { return 1.10 }
+            return hovering ? 1.05 : 1.0
         }
-    }
 
-    private func symbol(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 24, weight: .heavy, design: .rounded))
-            .foregroundStyle(AppTheme.ink.opacity(0.55))
-            .padding(.bottom, 20)
-    }
-
-    private var footnotes: some View {
-        HStack(spacing: 10) {
-            if let utensil = step.utensil {
-                badge {
-                    ArtIcon(id: utensil, size: 22)
-                    Text("Hold the \(FoodArt.name(utensil).lowercased())")
-                }
-            }
-            badge {
-                Image(systemName: "mappin.and.ellipse")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(AppTheme.ink.opacity(0.6))
-                Text(step.stationLabel)
-            }
+        /// A spring reads as "picked up"; reduce-motion users get the size
+        /// change without the bounce rather than no feedback at all.
+        private var motion: Animation {
+            reduceMotion
+                ? .easeOut(duration: 0.12)
+                : .spring(response: 0.26, dampingFraction: 0.62)
         }
-    }
-
-    private func badge<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        HStack(spacing: 7) {
-            content()
-        }
-        .font(.system(size: 13, weight: .bold, design: .rounded))
-        .foregroundStyle(AppTheme.ink.opacity(0.75))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background(Capsule().fill(Color(red: 0.93, green: 0.87, blue: 0.74)))
-        .overlay(Capsule().stroke(AppTheme.ink.opacity(0.2), lineWidth: 1.5))
     }
 }
 
@@ -574,6 +559,17 @@ private nonisolated struct DottedRule: Shape {
         path.move(to: CGPoint(x: rect.minX, y: rect.midY))
         path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
         return path
+    }
+}
+
+/// The tappable part of the hanging back sign: the plaque, not the trunk
+/// above it. Without this the whole trunk — most of the artwork, and mostly
+/// off-screen — would answer to a tap.
+private nonisolated struct BackSignPlaque: Shape {
+    func path(in rect: CGRect) -> Path {
+        let top = rect.minY + rect.height * BookArt.backSignPlaqueStart
+        return Path(CGRect(x: rect.minX, y: top,
+                           width: rect.width, height: max(0, rect.maxY - top)))
     }
 }
 
@@ -600,4 +596,19 @@ private nonisolated struct Signpost: Shape {
 
 #Preview("Other chefs") {
     RecipeBookView(session: KitchenSession(role: .guest), headChefOverride: false)
+}
+
+#Preview("Step detail") {
+    ZStack {
+        GeometryReader { geo in
+            Image("woods-clearing-art")
+                .resizable()
+                .scaledToFill()
+                .frame(width: geo.size.width, height: geo.size.height)
+                .clipped()
+        }
+        .ignoresSafeArea()
+
+        StepDetailView(step: RecipeBook.steps[0])
+    }
 }

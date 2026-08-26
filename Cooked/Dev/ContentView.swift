@@ -22,17 +22,27 @@ struct ContentView: View {
 
     // Storage pantry overlay + the shared inventory it fills (Kitchen map only).
     @State private var showStorage = false
-    @State private var showDrawer = false
     // Rot in hand blocks every tap but the bin; the map asks for this alert.
     @State private var showRottenAlert = false
     @StateObject private var inventory = PlayerInventory()
     @StateObject private var pantry = StoragePantry()
     @StateObject private var drawerBox = DrawerBox()
 
+    // Which illustrated station scene is open, if any.
+    @State private var previewStation: StationID?
+    @StateObject private var previewSession = KitchenSession(role: .host)
+
     var body: some View {
         GeometryReader { geometry in
- 
-            if let scene = activeScene {
+
+            if let previewStation {
+                StationPage(
+                    station: previewStation,
+                    session: previewSession,
+                    inventory: inventory,
+                    onClose: { self.previewStation = nil }
+                )
+            } else if let scene = activeScene {
                 // A screen is open, so show it with a Back button on top.
                 ZStack(alignment: .topLeading) {
  
@@ -68,7 +78,7 @@ struct ContentView: View {
 
                     // Storage pantry, opened from the storage station.
                     if showStorage {
-                        StorageView(inventory: inventory, pantry: pantry, onClose: {
+                        StorageView(inventory: inventory, pantry: pantry, drawerBox: drawerBox, onClose: {
                             withAnimation(.easeInOut(duration: 0.2)) { showStorage = false }
                         })
                         .transition(.opacity)
@@ -81,13 +91,8 @@ struct ContentView: View {
                         .transition(.opacity)
                     }
 
-                    // Drawer shelves, opened from the drawer station.
-                    if showDrawer {
-                        DrawerView(inventory: inventory, box: drawerBox, onClose: {
-                            withAnimation(.easeInOut(duration: 0.2)) { showDrawer = false }
-                        })
-                        .transition(.opacity)
-                    }
+                    // The shelves are no longer their own screen — they open
+                    // as the Storage Rack tab inside StorageView above.
                 }
 
             } else {
@@ -158,6 +163,20 @@ struct ContentView: View {
                         activeScene = makeScene(DecorateScreen(size: size))
                     }
      
+                    menuButton(title: "Chopping station (final art)") {
+                        inventory.pickUp(HeldIngredient(id: "strawberries", name: "Strawberries"))
+                        inventory.pickUp(HeldUtensil(id: "knife", name: "Knife"))
+                        previewStation = .chopping
+                    }
+
+                    menuButton(title: "Bowl station (final art)") {
+                        // Arrive holding one of the four things a bowl wants,
+                        // so the drop button has something to say.
+                        inventory.pickUp(HeldIngredient(id: "cream", name: "Cream"))
+                        inventory.pickUp(HeldUtensil(id: "whisk", name: "Whisk"))
+                        previewStation = .bowl2
+                    }
+
                     menuButton(title: "Garbage throw") {
                         activeName = "Garbage throw"
                         activeScene = makeScene(GarbageThrowPreviewScene(size: size))
@@ -171,9 +190,6 @@ struct ContentView: View {
                         scene.inventory = inventory
                         scene.onOpenStorage = {
                             withAnimation(.easeInOut(duration: 0.2)) { showStorage = true }
-                        }
-                        scene.onOpenDrawer = {
-                            withAnimation(.easeInOut(duration: 0.2)) { showDrawer = true }
                         }
                         scene.onRottenBlocked = {
                             withAnimation(.easeInOut(duration: 0.15)) { showRottenAlert = true }

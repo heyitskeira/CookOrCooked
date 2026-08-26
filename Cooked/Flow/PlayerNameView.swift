@@ -48,7 +48,7 @@ struct PlayerNameView: View {
     // Straight off the Figma frame (874 x 402), which reports each layer's
     // rendered box — no converting for rotation needed.
     private enum Layout {
-        static let rockTop = -29.0 / 402
+        static let rockTop = -1.0 / 402
         static let titleTop = 110.0 / 402
         static let subtitleTop = 229.0 / 402
 

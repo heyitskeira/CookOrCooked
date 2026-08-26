@@ -26,8 +26,12 @@ struct StationPopupView: View {
     // MARK: Snapshot-derived state
 
     private var completed: Set<Int> { Set(session.snapshot.completed) }
-    private var deposited: Set<String> { Set(session.snapshot.depositedFoods(at: station)) }
-    private var output: String? { session.snapshot.outputFood(at: station) }
+    // Through the session's own host-aware accessors, not `session.snapshot`
+    // directly — see the comment on KitchenScene.depositedFoods for why: the
+    // snapshot only refreshes on the tick `startCooking()` starts, so a
+    // solo/preview session (no ticker) would never see its own deposit.
+    private var deposited: Set<String> { Set(session.depositedFoods(at: station)) }
+    private var output: String? { session.outputFood(at: station) }
 
     /// Actions this station offers (bowls share). Repeatable producing actions
     /// always appear so preps can be re-made; the one-shot goals (pre-heat,

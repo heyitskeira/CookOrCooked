@@ -2,8 +2,15 @@
 //  StorageView.swift
 //  Cooked
 //
-//  The storage overlay: choose to search ingredients or utensils, pick one,
-//  and (for ingredients) see whether it came out fresh or rotten.
+//  The storage room: one cupboard with three tabs — the utensils on their
+//  hooks, the ingredients on their shelf, and the storage rack where a chef
+//  parks a half-finished prep.
+//
+//  The rack used to be its own station out on the map (the "drawer"). It is a
+//  tab here now because all three are the same errand — you go to the pantry to
+//  fetch or stash something — and one pin on the map is easier to read than two
+//  that look alike. `StationID.drawer` still exists behind this, unchanged, so
+//  nothing about how shelves sync had to move.
 //
 
 import SwiftUI
@@ -13,19 +20,35 @@ struct StorageView: View {
     @ObservedObject var inventory: PlayerInventory
     /// Local utensil stock, used only when there's no networked game (test menu).
     @ObservedObject var pantry: StoragePantry
+    /// The shelves behind the Storage Rack tab. Local fallback only; the host
+    /// owns them once a game is running.
+    @ObservedObject var drawerBox: DrawerBox
     /// The live game. When present, utensil stock is host-authoritative and
     /// draws go through it; nil means offline/test-menu (use `pantry`).
     var session: KitchenSession? = nil
     /// Called when the chef leaves storage (closes the overlay).
     var onClose: () -> Void
 
-    private enum Screen {
-        case menu
-        case ingredients
-        case utensils
+    /// The three shelves of the cupboard, in the order the design shows them.
+    private enum Tab: String, CaseIterable, Identifiable {
+        case utensils, ingredients, rack
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .utensils:    return "Utensils"
+            case .ingredients: return "Ingredients"
+            case .rack:        return "Storage Rack"
+            }
+        }
     }
 
-    @State private var screen: Screen = .menu
+    @State private var tab: Tab = .utensils
+    /// One cursor per carousel, so switching tabs within a visit keeps your
+    /// place. Leaving the pantry tears the view down and resets all three —
+    /// walk back in and you are on Utensils at the first item again. Hoist
+    /// these to `KitchenGameView` if that ever needs to persist.
+    @State private var utensilIndex = 0
+    @State private var ingredientIndex = 0
     @State private var ingredientDraw: IngredientDraw? = nil   // result popup
     @State private var takenUtensil: Utensil? = nil            // result popup
     @State private var outOfStock: String? = nil               // result popup
@@ -39,15 +62,15 @@ struct StorageView: View {
 
     var body: some View {
         ZStack {
-            AppTheme.background
+            backdrop
 
-            VStack(spacing: 24) {
+            VStack(spacing: 12) {
                 header
                 content
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: 620)
-            .padding(.horizontal, 40)
-            .padding(.vertical, 28)
+            .padding(.horizontal, 28)
+            .padding(.vertical, 18)
         }
         .ignoresSafeArea()
         .overlay { resultPopup }
@@ -91,141 +114,151 @@ struct StorageView: View {
         session.clearUtensilReply()
     }
 
-    // MARK: Header (title + back/close)
+    // MARK: Backdrop
+
+    /// The cupboard interior behind the utensils and ingredients; the rack tab
+    /// brings its own woodland backing, so it gets a plain wash instead.
+    @ViewBuilder
+    private var backdrop: some View {
+        if tab != .rack, let art = UIImage(named: "bg-storage-cupboard") {
+            Image(uiImage: art)
+                .resizable()
+                .scaledToFill()
+                .clipped()
+        } else {
+            AppTheme.background
+        }
+    }
+
+    // MARK: Header (back + tabs + clock)
 
     private var header: some View {
-        ZStack {
-            Text(title)
-                .font(.system(size: 30, weight: .heavy, design: .rounded))
-                .foregroundStyle(AppTheme.ink)
+        HStack(alignment: .top, spacing: 12) {
+            Button(action: onClose) {
+                Image(systemName: "arrowshape.turn.up.backward.fill")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(AppTheme.ink)
+                    .frame(width: 46, height: 46)
+                    .background(Circle().fill(AppTheme.cream))
+                    .overlay(Circle().stroke(AppTheme.ink, lineWidth: 3))
+            }
+            .accessibilityLabel("Leave storage")
 
-            HStack {
+            Spacer(minLength: 0)
+            tabBar
+            Spacer(minLength: 0)
+
+            // Balances the back button so the tab row sits centred. The clock
+            // itself is drawn by the scene underneath, not here.
+            Color.clear.frame(width: 46, height: 46)
+        }
+    }
+
+    private var tabBar: some View {
+        HStack(spacing: 6) {
+            ForEach(Tab.allCases) { entry in
+                let selected = entry == tab
                 Button {
-                    if screen == .menu { onClose() } else { screen = .menu }
+                    withAnimation(.easeInOut(duration: 0.15)) { tab = entry }
                 } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 22, weight: .bold))
-                        .foregroundStyle(AppTheme.ink)
-                        .frame(width: 52, height: 52)
-                        .background(Circle().fill(AppTheme.cream))
-                        .overlay(Circle().stroke(AppTheme.ink, lineWidth: 3))
+                    Text(entry.title)
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(selected ? AppTheme.ink : AppTheme.cream)
+                        .padding(.horizontal, 16)
+                        .frame(height: 32)
+                        .background(
+                            Capsule().fill(selected ? AppTheme.cream : Color.black.opacity(0.35))
+                        )
+                        .overlay(
+                            Capsule().stroke(AppTheme.ink.opacity(selected ? 1 : 0.35),
+                                             lineWidth: selected ? 2.5 : 1.5)
+                        )
                 }
-                .accessibilityLabel(screen == .menu ? "Leave storage" : "Back")
-
-                Spacer()
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? [.isSelected] : [])
             }
         }
+        .padding(4)
+        .background(Capsule().fill(Color.black.opacity(0.18)))
     }
 
-    private var title: String {
-        switch screen {
-        case .menu:        return "Storage"
-        case .ingredients: return "Ingredients"
-        case .utensils:    return "Utensils"
-        }
-    }
-
-    // MARK: Content per screen
+    // MARK: Content per tab
 
     @ViewBuilder
     private var content: some View {
-        switch screen {
-        case .menu:
-            menu
-        case .ingredients:
-            itemList(Storage.ingredients.map { ($0.id, $0.name) }) { id in
-                guard let ing = Storage.ingredients.first(where: { $0.id == id }) else { return }
-                if inventory.isHoldingRotten {
-                    prepAlert = Rotten.blockedMessage
-                    return
-                }
-                if inventory.isHoldingPrep {
-                    prepAlert = "You already held on to a prep!"
-                    return
-                }
-                let draw = Storage.draw(ing)
-                ingredientDraw = draw
-                // Put it in hand (replaces whatever raw ingredient was held).
-                inventory.pickUp(HeldIngredient(id: draw.ingredient.id,
-                                                name: draw.ingredient.name,
-                                                isRotten: draw.isRotten))
-            }
+        switch tab {
         case .utensils:
-            itemList(Storage.utensils.map { ($0.id, "\($0.name)  ·  \(utensilsLeft($0.id)) left") }) { id in
-                guard let ut = Storage.utensils.first(where: { $0.id == id }) else { return }
-                takeUtensil(ut)
-            }
-        }
-    }
-
-    private var menu: some View {
-        VStack(spacing: 20) {
-            bigChoice(title: "Search Ingredients", icon: "leaf.fill") {
-                screen = .ingredients
-            }
-            bigChoice(title: "Search Utensils", icon: "fork.knife") {
-                screen = .utensils
-            }
-        }
-    }
-
-    private func bigChoice(title: String, icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 16) {
-                Image(systemName: icon)
-                    .font(.system(size: 26, weight: .bold))
-                Text(title)
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 20, weight: .bold))
-                    .opacity(0.5)
-            }
-            .foregroundStyle(AppTheme.cream)
-            .padding(.horizontal, 24)
-            .frame(height: 84)
-            .frame(maxWidth: .infinity)
-            .background(Capsule().fill(AppTheme.tomato))
-            .overlay(Capsule().stroke(AppTheme.ink, lineWidth: 3))
-            .shadow(color: AppTheme.ink.opacity(0.2), radius: 5, x: 0, y: 4)
-        }
-        .buttonStyle(.plain)
-    }
-
-    // Generic tappable list used by both ingredients and utensils.
-    private func itemList(_ items: [(String, String)], onPick: @escaping (String) -> Void) -> some View {
-        ScrollView {
-            VStack(spacing: 12) {
-                ForEach(items, id: \.0) { id, name in
-                    Button {
-                        onPick(id)
-                    } label: {
-                        HStack {
-                            Text(name)
-                                .font(.system(size: 22, weight: .bold, design: .rounded))
-                                .foregroundStyle(AppTheme.ink)
-                            Spacer()
-                            Image(systemName: "hand.tap.fill")
-                                .font(.system(size: 18, weight: .bold))
-                                .foregroundStyle(AppTheme.ink.opacity(0.4))
-                        }
-                        .padding(.horizontal, 20)
-                        .frame(height: 62)
-                        .background(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .fill(AppTheme.cream)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(AppTheme.ink, lineWidth: 2.5)
-                        )
-                    }
-                    .buttonStyle(.plain)
+            VStack(spacing: 6) {
+                StorageCarousel(items: utensilItems, index: $utensilIndex) { item in
+                    guard let ut = Storage.utensils.first(where: { $0.id == item.id }) else { return }
+                    takeUtensil(ut)
                 }
+                caption("Select your Utensils")
             }
-            .padding(.vertical, 4)
+
+        case .ingredients:
+            VStack(spacing: 6) {
+                StorageCarousel(items: ingredientItems, index: $ingredientIndex) { item in
+                    pickIngredient(item.id)
+                }
+                caption("Select your Ingredients")
+            }
+
+        case .rack:
+            // The old drawer screen, unchanged in behaviour — same shelves,
+            // same host round-trip, same refusal messages. Only the way in
+            // changed.
+            DrawerView(inventory: inventory,
+                       box: drawerBox,
+                       session: session,
+                       showsCloseButton: false,
+                       onClose: onClose)
         }
-        .frame(maxHeight: 360)
+    }
+
+    private func caption(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 15, weight: .bold, design: .rounded))
+            .foregroundStyle(AppTheme.cream)
+            .shadow(color: .black.opacity(0.6), radius: 3, x: 0, y: 1)
+    }
+
+    // MARK: Rows
+
+    private var utensilItems: [StorageCarouselItem] {
+        Storage.utensils.map { ut in
+            let left = utensilsLeft(ut.id)
+            return StorageCarouselItem(
+                id: ut.id,
+                name: ut.name,
+                detail: left > 0 ? "\(left) left" : "In use",
+                // Someone else is holding the last one — show the dark
+                // silhouette rather than letting the chef tap a dead item.
+                isInUse: left <= 0
+            )
+        }
+    }
+
+    private var ingredientItems: [StorageCarouselItem] {
+        Storage.ingredients.map { StorageCarouselItem(id: $0.id, name: $0.name) }
+    }
+
+    private func pickIngredient(_ id: String) {
+        guard let ing = Storage.ingredients.first(where: { $0.id == id }) else { return }
+        if inventory.isHoldingRotten {
+            prepAlert = Rotten.blockedMessage
+            return
+        }
+        if inventory.isHoldingPrep {
+            prepAlert = "You already held on to a prep!"
+            return
+        }
+        let draw = Storage.draw(ing)
+        ingredientDraw = draw
+        // Put it in hand (replaces whatever raw ingredient was held).
+        inventory.pickUp(HeldIngredient(id: draw.ingredient.id,
+                                        name: draw.ingredient.name,
+                                        isRotten: draw.isRotten))
     }
 
     // MARK: Result popup (fresh / rotten / utensil taken)
@@ -309,5 +342,8 @@ struct StorageView: View {
 }
 
 #Preview {
-    StorageView(inventory: PlayerInventory(), pantry: StoragePantry(), onClose: {})
+    StorageView(inventory: PlayerInventory(),
+                pantry: StoragePantry(),
+                drawerBox: DrawerBox(),
+                onClose: {})
 }

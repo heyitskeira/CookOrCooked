@@ -59,10 +59,30 @@ final class SoundFX: ObservableObject {
         didSet { UserDefaults.standard.set(isMuted, forKey: Self.muteKey) }
     }
 
+    /// Where the settings slider sits, 0...1. Scales `fullVolume` rather than
+    /// replacing it, so 1.0 stays the level the mix was tuned at.
+    ///
+    /// Applied to every loaded player as it changes — unlike music there is no
+    /// single "current" player, and an effect that was cached before the player
+    /// moved the slider would otherwise keep its old level for the whole
+    /// session.
+    @Published var volume: Double {
+        didSet {
+            let clamped = min(max(volume, 0), 1)
+            if clamped != volume { volume = clamped; return }
+            guard oldValue != volume else { return }
+            UserDefaults.standard.set(volume, forKey: Self.volumeKey)
+            players.values.forEach { $0.volume = playbackVolume }
+        }
+    }
+
     private static let muteKey = "sfx.muted"
+    private static let volumeKey = "sfx.volume"
 
     /// Effects sit on top of the music, so they're louder than it is.
-    private let volume: Float = 0.85
+    private let fullVolume: Float = 0.85
+
+    private var playbackVolume: Float { fullVolume * Float(volume) }
 
     private var players: [Effect: AVAudioPlayer] = [:]
     /// Effects whose file is missing. Checked once, then never looked up again
@@ -72,6 +92,8 @@ final class SoundFX: ObservableObject {
 
     private init() {
         isMuted = UserDefaults.standard.bool(forKey: Self.muteKey)
+        // Absent means full, not zero — see the same note in `Music`.
+        volume = UserDefaults.standard.object(forKey: Self.volumeKey) as? Double ?? 1.0
     }
 
     // MARK: Playing
@@ -115,7 +137,7 @@ final class SoundFX: ObservableObject {
             return nil
         }
 
-        player.volume = volume
+        player.volume = playbackVolume
         player.prepareToPlay()
         players[effect] = player
         return player

@@ -41,7 +41,7 @@ enum WaitingRoomLayout {
         static let nameSize = 12.0 / 874
         // The drawing's own box inside the plate. Each animal is fitted to
         // this and stood on its bottom edge, whatever its own proportions.
-        static let animalWidth = 66.0 / 874
+        static let animalWidth = 96.0 / 874
         static let animalHeight = 86.0 / 402
 
         /// The leaf marking which chef is you, and the word sitting on it.

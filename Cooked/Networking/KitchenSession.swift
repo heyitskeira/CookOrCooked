@@ -1323,6 +1323,15 @@ final class KitchenSession: ObservableObject {
         isHost ? stationOutput[station.rawValue] : snapshot.outputFood(at: station)
     }
 
+    /// Seconds left on the kitchen clock (host reads its own game; guest the
+    /// snapshot) — the same host-aware split `outputFood` and `depositedFoods`
+    /// use, and for the same reason: a solo session never starts the 10Hz tick
+    /// that refreshes the snapshot, so a direct snapshot read would show a
+    /// clock frozen at 15:00 for the whole round.
+    var secondsRemaining: TimeInterval {
+        isHost ? game.timeRemaining : snapshot.timeRemaining
+    }
+
     /// Ingredients dropped at a station so far (host table / guest snapshot).
     func depositedFoods(at station: StationID) -> [String] {
         isHost ? (deposited[station.rawValue] ?? []) : snapshot.depositedFoods(at: station)

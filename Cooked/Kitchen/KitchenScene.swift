@@ -1301,7 +1301,18 @@ final class KitchenScene: SKScene {
     /// across eight stations is a real cost for no visible difference.
     private func refreshStations() {
         for id in stationNodes.keys {
-            let owner = session?.occupant(of: id)
+            let occupant = session?.occupant(of: id)
+
+            // Your own claim is not worth drawing. Walking up to a counter put
+            // your chef marker on it, so the coloured ring and the "you're
+            // here" caption only repeat what is already under them — and on a
+            // painted scene that reads as a stray UI circle stuck to the grass,
+            // which is the same reason the green "ready" ring below was dropped.
+            //
+            // Someone else's claim still draws: that one is real information,
+            // the difference between a counter you can walk up to and one you
+            // cannot.
+            let owner = occupant?.id == session?.localPlayerID ? nil : occupant
             // Occupancy is the only thing drawn now, so it is the only thing
             // the change-check needs. Availability used to be in this key to
             // drive the green ready ring; with that gone, computing it meant
@@ -1323,9 +1334,10 @@ final class KitchenScene: SKScene {
                 halo?.lineWidth = 4
                 label?.isHidden = false
                 label?.fontColor = Self.colour(owner.colorIndex)
-                label?.text = owner.id == session?.localPlayerID
-                    ? "you're here"
-                    : "\(owner.name) is here"
+                // Always someone else — `owner` is nil for your own claim now,
+                // so the "you're here" caption that used to be here can never
+                // be reached.
+                label?.text = "\(owner.name) is here"
             } else {
                 // Free. Nothing is drawn — not even on a station that has an
                 // action waiting. The green "ready" ring used to sit here, and

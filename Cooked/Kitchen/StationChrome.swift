@@ -28,6 +28,13 @@ struct StationHeaderBar: View {
     /// 0...1. Stations with nothing in flight (a bowl waiting to be chosen at)
     /// simply leave this at 0 and the bar reads as a plain label.
     var progress: CGFloat = 0
+    /// The little picture tucked into the bar's top-left corner, or nil for a
+    /// bar with no badge.
+    ///
+    /// Used to be hardcoded to the strawberry bucket, back when the chopping
+    /// page was the only caller — which meant the bowl station wore a punnet of
+    /// strawberries no matter what was actually in the bowl.
+    var badgeArt: String? = nil
     let geo: GeometryProxy
 
     static let frame = CGRect(x: 170, y: -56, width: 560, height: 52)
@@ -61,7 +68,7 @@ struct StationHeaderBar: View {
         .overlay(Capsule().stroke(StationPalette.ink.opacity(0.4), lineWidth: 1.5))
         .figmaPlaced(Self.frame, in: geo)
         .overlay(alignment: .topLeading) {
-            if let art = FoodArt.art("bucket-strawberries") {
+            if let badgeArt, let art = FoodArt.art(badgeArt) {
                 Image(uiImage: art).resizable().scaledToFit()
                     .figmaPlaced(Self.frame.minX - 12, Self.frame.minY - 12, 61, 54, in: geo)
             }
@@ -117,6 +124,61 @@ struct StationBackButton: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Leave the station")
         .figmaPlaced(49, -56, Self.side, Self.side, in: geo)
+    }
+}
+
+/// The kitchen clock, mirrored into the station page.
+///
+/// The map's own HUD clock is hidden while a chef is heads-down at a counter,
+/// so without this there is nothing telling them the round is running out while
+/// they stand there holding a button.
+///
+/// Position measured off the reference screenshots by matching
+/// `hud-timer-clock` into them: centred at (830, -8), mirroring the back button
+/// across the artboard. The box keeps the art's own 246x270 proportions so the
+/// bells aren't squashed, and stops well short of the header bar's right edge
+/// at x = 730.
+struct StationTimer: View {
+
+    /// Seconds left. Reads `KitchenSession.secondsRemaining`, which is
+    /// host-aware — a solo game's snapshot never ticks.
+    let secondsRemaining: TimeInterval
+    let geo: GeometryProxy
+
+    static let frame = CGRect(x: 790, y: -51, width: 78, height: 86)
+
+    /// The face is drawn empty and the time goes on top of it. It sits below
+    /// the middle of the image because the bells take up the top third.
+    private static let faceOffset: CGFloat = 9
+
+    private var isUrgent: Bool { secondsRemaining < Recipe.timeLimit * 0.1 }
+
+    private var clockText: String {
+        let whole = max(0, Int(secondsRemaining))
+        return String(format: "%02d:%02d", whole / 60, whole % 60)
+    }
+
+    var body: some View {
+        ZStack {
+            if let art = FoodArt.art("hud-timer-clock") {
+                Image(uiImage: art).resizable().scaledToFit()
+                    .figmaPlaced(Self.frame, in: geo)
+            }
+
+            Text(clockText)
+                .font(.system(size: 17, weight: .heavy, design: .rounded))
+                .monospacedDigit()
+                // The last tenth of the round goes red — the same threshold
+                // `KitchenScene.refreshHUD` uses, so the two clocks can never
+                // disagree about when to start worrying.
+                .foregroundStyle(isUrgent ? Color(red: 0.72, green: 0.20, blue: 0.16)
+                                          : StationPalette.ink)
+                .figmaPlaced(Self.frame.minX,
+                             Self.frame.minY + Self.faceOffset,
+                             Self.frame.width, Self.frame.height, in: geo)
+        }
+        .allowsHitTesting(false)
+        .accessibilityLabel("Time remaining \(clockText)")
     }
 }
 

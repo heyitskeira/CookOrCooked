@@ -73,8 +73,11 @@ struct WaitingRoomView: View {
             rockAspect: Layout.rockAspect,
             rockTop: Layout.rockTop,
             titleTop: Layout.titleTop,
-            nextLabel: session.isReady ? "Not ready" : "Ready",
-            nextEnabled: session.connectedCount >= 2,
+            // No signpost here. Every chef presses Ready — the host does not
+            // start the room — and there is no READY sign drawn in the design,
+            // so the control is a lettered plate like the room code beside it
+            // rather than the NEXT sign wearing the wrong word.
+            showNext: false,
             onBack: {
                 // The host leaving is the end of the kitchen, and the guests are
                 // told so explicitly — otherwise they freeze and wait ninety
@@ -82,10 +85,11 @@ struct WaitingRoomView: View {
                 if session.isHost { session.closeKitchen() } else { session.leave() }
                 dismiss()
             },
-            onNext: { session.setReady(!session.isReady) }
+            onNext: {}
         ) { w, h in
             chefCards(w: w, h: h)
             statusLine(w: w, h: h)
+            readyPlate(w: w, h: h)
             if session.isHost {
                 roomCode(w: w, h: h)
             }
@@ -245,6 +249,32 @@ struct WaitingRoomView: View {
                 : "Waiting on \(only.name)"
         }
         return "\(session.connectedCount) out of \(maxPlayers) chefs have joined!"
+    }
+
+    /// Every chef says when they are ready and the room starts itself once it
+    /// is unanimous, so this is the only control in the lobby.
+    ///
+    /// It stays on screen through the countdown on purpose: three seconds
+    /// exists so somebody can change their mind, and hiding the one control
+    /// that would let them makes it a decorative delay instead of a real one.
+    private func readyPlate(w: CGFloat, h: CGFloat) -> some View {
+        let enabled = session.connectedCount >= 2
+
+        return Button {
+            session.setReady(!session.isReady)
+        } label: {
+            Text(session.isReady ? "WAITING" : "READY")
+                .font(.system(size: w * Layout.countSize * 1.4, weight: .heavy).width(.condensed))
+                .foregroundStyle(session.isReady ? AppTheme.bark : AppTheme.barkDeep)
+                .padding(.horizontal, w * 0.018)
+                .padding(.vertical, h * 0.014)
+                .background(plate)
+        }
+        .buttonStyle(.plain)
+        .opacity(enabled ? 1 : 0.5)
+        .disabled(!enabled)
+        .position(x: w * 0.82, y: h * 0.78)
+        .accessibilityLabel(session.isReady ? "Ready. Tap to wait" : "I am ready")
     }
 
     /// The four digits a guest has to read off this screen to get in.

@@ -215,6 +215,48 @@ struct ForestRockScreen<Content: View>: View {
 
 enum RockArt {
 
+    /// A drawing scaled to sit inside a box rather than to a width.
+    ///
+    /// Art exported per-character comes back at whatever proportions each
+    /// drawing happens to have — the chef animals range from 0.82 to 1.59 tall
+    /// over wide. Sizing those by width alone gives every one a different
+    /// height, which is what pulls a row of cards out of line. Fitting them to
+    /// a shared box and standing them on its bottom edge keeps the row level
+    /// however different the drawings are.
+    @ViewBuilder
+    static func fitted(_ name: String,
+                       width: CGFloat,
+                       height: CGFloat,
+                       alignment: Alignment = .bottom) -> some View {
+        if let art = UIImage(named: name) {
+            Image(uiImage: art)
+                .resizable()
+                .scaledToFit()
+                .frame(width: width, height: height, alignment: alignment)
+        } else {
+            placeholder(name, width: width, height: height)
+        }
+    }
+
+    @ViewBuilder
+    static func placeholder(_ name: String, width: CGFloat, height: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(.white.opacity(0.35))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(AppTheme.ink.opacity(0.5),
+                                  style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+            )
+            .overlay(
+                Text(name)
+                    .font(.system(size: max(width * 0.09, 5), weight: .semibold, design: .monospaced))
+                    .foregroundStyle(AppTheme.ink.opacity(0.7))
+                    .minimumScaleFactor(0.5)
+                    .padding(3)
+            )
+            .frame(width: width, height: height)
+    }
+
     /// The real drawing once it is in the catalog, and a labelled dashed box
     /// until then — so a layout can be built, tapped, and typed into before any
     /// art exists, and each drawing drops in without a code change.

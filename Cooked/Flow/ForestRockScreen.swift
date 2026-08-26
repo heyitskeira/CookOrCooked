@@ -69,20 +69,6 @@ enum RockLayout {
     static let backHeight = 78.0 / 402
 }
 
-/// One drawing making up part of a rock, placed by its own box in the design.
-///
-/// The lobby's rock is a slab with three separate falls of ivy over it, and
-/// they cannot be flattened into one export: the group that holds them in Figma
-/// also holds the screen's title and its chef cards, so exporting the group
-/// bakes a mock kitchen's name and chefs into the background.
-struct RockLayer {
-    let asset: String
-    let left: CGFloat
-    let top: CGFloat
-    let width: CGFloat
-    let aspect: CGFloat
-}
-
 // MARK: - The screen
 
 struct ForestRockScreen<Content: View>: View {
@@ -93,17 +79,12 @@ struct ForestRockScreen<Content: View>: View {
     /// list — the rows are their own explanation.
     var subtitle: String = ""
 
-    /// The rock itself. The setup screens share one slab; the waiting room is
-    /// drawn on a wider one with vines down both sides.
+    /// The rock itself. The setup screens share one slab; the lobby is drawn
+    /// on a wider one with vines down both sides.
     var rockAsset: String = "ui-name-rock"
     var rockLeft: CGFloat = RockLayout.rockLeft
     var rockWidth: CGFloat = RockLayout.rockWidth
     var rockAspect: CGFloat = RockLayout.rockAspect
-
-    /// Drawn instead of `rockAsset` when its pieces are in the catalog. Falls
-    /// back to the single image while they are not, so a half-finished export
-    /// never leaves the screen with nothing behind it.
-    var rockLayers: [RockLayer] = []
 
     /// Where the rock's top edge sits. Negative pushes it off the top of the
     /// screen, which is what the chef-name screen does.
@@ -172,17 +153,9 @@ struct ForestRockScreen<Content: View>: View {
 
     // MARK: - Pieces
 
-    @ViewBuilder
     private func rockArt(w: CGFloat, h: CGFloat) -> some View {
-        if rockLayers.isEmpty || !rockLayers.allSatisfy({ UIImage(named: $0.asset) != nil }) {
-            RockArt.image(rockAsset, width: w * rockWidth, aspect: rockAspect)
-                .offset(x: w * rockLeft, y: h * rockTop)
-        } else {
-            ForEach(Array(rockLayers.enumerated()), id: \.offset) { _, layer in
-                RockArt.image(layer.asset, width: w * layer.width, aspect: layer.aspect)
-                    .offset(x: w * layer.left, y: h * layer.top)
-            }
-        }
+        RockArt.image(rockAsset, width: w * rockWidth, aspect: rockAspect)
+            .offset(x: w * rockLeft, y: h * rockTop)
     }
 
     private func titleText(w: CGFloat, h: CGFloat) -> some View {

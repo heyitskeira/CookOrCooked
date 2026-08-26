@@ -27,13 +27,6 @@ struct RockPlate: View {
 /// Shared by the screen and the card row it draws — one copy of the design's
 /// numbers, read off Figma frame 838:549 (874 x 402).
 enum WaitingRoomLayout {
-        // The lobby's rock is its own drawing: wider than the setup screens'
-        // slab, with vines down both sides. Exported whole as Frame 40.
-        static let rockLeft = 88.0 / 874
-        static let rockTop = 14.0 / 402
-        static let rockWidth = 698.0 / 874
-        static let rockAspect = 374.0 / 698
-
         static let titleTop = 94.0 / 402
 
         // One chef card: a portrait box with a name plate hung under it.
@@ -56,34 +49,16 @@ enum WaitingRoomLayout {
         static let leafWidth = 46.0 / 874
         static let leafCentre = CGPoint(x: 18.6 / 92, y: 99.8 / 116)
 
-        /// The lobby's rock, as its separate drawings. Exporting the Figma group
-    /// that holds them would bake in the mock title and chef cards that live in
-    /// the same group — which is exactly what went wrong the first time.
-    static let rockPieces: [RockLayer] = [
-        RockLayer(asset: "ui-rock-slab",
-                  left: 71.0 / 874, top: -2.0 / 402,
-                  width: 736.0 / 874, aspect: 411.0 / 736),
-        RockLayer(asset: "ui-rock-vine-mid",
-                  left: 331.0 / 874, top: 64.0 / 402,
-                  width: 216.0 / 874, aspect: 337.0 / 216),
-        RockLayer(asset: "ui-rock-vine-left",
-                  left: -9.0 / 874, top: -15.0 / 402,
-                  width: 377.0 / 874, aspect: 315.2 / 377),
-        RockLayer(asset: "ui-rock-vine-right",
-                  left: 513.0 / 874, top: -15.0 / 402,
-                  width: 377.0 / 874, aspect: 315.2 / 377)
-    ]
+        // The lobby's rock: slab and vines in one drawing, 685 x 394pt.
+        // Figma's Frame 40 sits centred on the screen, so this does too, which
+        // keeps the cards and lettering above it where the design puts them.
+        static let rockAsset = "ui-rock-slab"
+        static let rockWidth = 685.0 / 874
+        static let rockAspect = 394.0 / 685
+        static let rockLeft = ((874.0 - 685.0) / 2) / 874
+        static let rockTop = ((402.0 - 394.0) / 2) / 402
 
-    /// Stands in until those four pieces exist. The setup screens' slab is a
-    /// clean drawing — no title, no chefs — placed on the design's own slab box
-    /// so the cards and lettering above it land in the right place either way.
-    static let fallbackRockAsset = "ui-name-rock"
-    static let fallbackRockLeft = 71.0 / 874
-    static let fallbackRockTop = -2.0 / 402
-    static let fallbackRockWidth = 736.0 / 874
-    static let fallbackRockAspect = 411.0 / 736
-
-    static let countLeft = 661.0 / 874
+        static let countLeft = 661.0 / 874
         static let countTop = 360.0 / 402
         static let countSize = 16.0 / 874
     }
@@ -280,11 +255,11 @@ private struct ChefCardsPreview: View {
     var body: some View {
         ForestRockScreen(
             title: banner,
-            rockAsset: WaitingRoomLayout.fallbackRockAsset,
-            rockLeft: WaitingRoomLayout.fallbackRockLeft,
-            rockWidth: WaitingRoomLayout.fallbackRockWidth,
-            rockAspect: WaitingRoomLayout.fallbackRockAspect,
-            rockTop: WaitingRoomLayout.fallbackRockTop,
+            rockAsset: WaitingRoomLayout.rockAsset,
+            rockLeft: WaitingRoomLayout.rockLeft,
+            rockWidth: WaitingRoomLayout.rockWidth,
+            rockAspect: WaitingRoomLayout.rockAspect,
+            rockTop: WaitingRoomLayout.rockTop,
             titleTop: WaitingRoomLayout.titleTop,
             showNext: false,
             onBack: {},

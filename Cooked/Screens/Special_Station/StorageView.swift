@@ -51,11 +51,15 @@ struct StorageView: View {
         session?.utensilsLeft(id) ?? pantry.remaining(id)
     }
 
-    /// The countdown on the cupboard clock. A solo/test-menu session never
-    /// starts the 10Hz snapshot tick, so it reads the full round there — a
-    /// still dial rather than a wrong one.
+    /// The countdown on the cupboard clock.
+    ///
+    /// `secondsRemaining` rather than the snapshot directly: the host reads its
+    /// own live game and only a guest reads the snapshot. Reading the snapshot
+    /// here showed the host a clock frozen at the full round, because the 10Hz
+    /// tick that refreshes it only runs once two players are connected.
+    /// Falls back to the full round with no session at all (the test menu).
     private var timeRemaining: TimeInterval {
-        session?.snapshot.timeRemaining ?? Recipe.timeLimit
+        session?.secondsRemaining ?? Recipe.timeLimit
     }
 
     var body: some View {

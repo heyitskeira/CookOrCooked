@@ -82,3 +82,6 @@ Icon
 *.mobileprovision
 Secrets.swift
 .env
+# Python bytecode caches (Tools/figma.py)
+__pycache__/
+*.pyc

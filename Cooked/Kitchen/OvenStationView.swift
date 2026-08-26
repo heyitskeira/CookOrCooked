@@ -135,7 +135,7 @@ struct OvenStationView: View {
             ZStack {
                 StationGround(geo: geo)
                 ovenLayer(geo)
-                StationHands(inventory: inventory, geo: geo)
+                StationHands(inventory: inventory, geo: geo, pawAsset: session.localPawAsset)
 
                 StationHeaderBar(title: runningAction?.name ?? action?.name ?? station.displayName,
                                  progress: game?.progress ?? (ovenIsLit ? 1 : 0),

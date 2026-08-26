@@ -176,7 +176,7 @@ struct BowlStationView: View {
                     choosingLayer(geo)
                 }
 
-                StationHands(inventory: inventory, geo: geo)
+                StationHands(inventory: inventory, geo: geo, pawAsset: session.localPawAsset)
                 StationTimer(secondsRemaining: session.secondsRemaining, geo: geo)
 
                 StationBackButton(geo: geo, action: leave)

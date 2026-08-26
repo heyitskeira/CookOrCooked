@@ -175,7 +175,8 @@ struct StoveStationView: View {
                 stoveLayer(geo)
                 thermometer(geo)
 
-                StationHands(inventory: inventory, geo: geo, frames: Self.handFrames)
+                StationHands(inventory: inventory, geo: geo, frames: Self.handFrames,
+                             pawAsset: session.localPawAsset)
 
                 StationHeaderBar(title: action?.name ?? station.displayName,
                                  progress: headerProgress, geo: geo)

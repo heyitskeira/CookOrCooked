@@ -25,6 +25,43 @@ enum ChefCast {
     /// How many chef drawings exist in the catalog as `ui-chef-1`…`ui-chef-N`.
     static let count = 6
 
+    /// Which animal each `ui-chef-N` drawing actually is.
+    ///
+    /// The asset names are numbered, not named, so nothing in code could tell
+    /// you that chef 4 is a beaver — and the paws, which *are* named, had no way
+    /// to agree with the portraits. Read off the artwork itself, in asset order.
+    ///
+    /// This is the fact that makes a chef one character across the whole game
+    /// rather than a portrait in the lobby and unrelated paws in the kitchen.
+    enum Animal: String, CaseIterable {
+        case squirrel, bear, raccoon, beaver, rabbit, fox
+
+        /// The full-body portrait, on the lobby cards.
+        var portrait: String { "ui-chef-\(ChefCast.number(of: self))" }
+        /// The pair of front paws, held up at a counter.
+        var paw: String { "paw-\(rawValue)" }
+    }
+
+    /// 1-based position of an animal in the `ui-chef-N` numbering.
+    private static func number(of animal: Animal) -> Int {
+        (Animal.allCases.firstIndex(of: animal) ?? 0) + 1
+    }
+
+    /// The animal a seat wears in a given kitchen.
+    ///
+    /// Every screen that draws a chef — the lobby card, the paws on the map, the
+    /// paws at a station — must go through this and nothing else. Two different
+    /// mappings is exactly the bug this replaces: the portrait said one animal
+    /// and the paws said another, on the same player, in the same match.
+    static func animal(seat: Int, roomCode: String) -> Animal {
+        Animal.allCases[number(seat: seat, roomCode: roomCode) - 1]
+    }
+
+    /// The paws for a seat. Same seat, same room, same answer on every device.
+    static func paw(seat: Int, roomCode: String) -> String {
+        animal(seat: seat, roomCode: roomCode).paw
+    }
+
     /// The drawing for a seat in a given kitchen.
     ///
     /// `seat` is the player's `colorIndex`, which the host hands out on join and

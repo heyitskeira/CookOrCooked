@@ -110,7 +110,7 @@ struct ChoppingStationView: View {
                 StationGround(geo: geo)
                 cuttingBoardLayer(geo)
                 boardFoodLayer(geo)
-                StationHands(inventory: inventory, geo: geo)
+                StationHands(inventory: inventory, geo: geo, pawAsset: session.localPawAsset)
                 StationHeaderBar(title: action?.name ?? station.displayName,
                                  progress: chopProgress,
                                  badgeArt: "bucket-strawberries", geo: geo)

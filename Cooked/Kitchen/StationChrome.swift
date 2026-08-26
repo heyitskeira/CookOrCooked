@@ -258,13 +258,25 @@ struct StationHands: View {
     /// butter does, and a bowl of melted butter differently again. Anything
     /// not listed uses the shared slot below.
     var frames: [String: CGRect] = [:]
+    /// Whose paws these are.
+    ///
+    /// Was the single `hands` drawing, which meant every chef in the room looked
+    /// down at the same pair — you could be a fox on the lobby card and a
+    /// stranger's paws at the counter. `KitchenSession.localPawAsset` resolves
+    /// this through `ChefCast`, so it agrees with the card and with the map.
+    ///
+    /// Defaulted so the SwiftUI previews, which have no session, still draw
+    /// something.
+    var pawAsset: String = ChefCast.Animal.squirrel.paw
 
     private static let ingredientSlot = CGRect(x: 663, y: 290, width: 134, height: 104)
     private static let utensilSlot = CGRect(x: 773, y: 276, width: 104, height: 131)
 
     var body: some View {
         ZStack {
-            if let art = FoodArt.art("hands") {
+            // Falls back to the old shared pair if an animal's paws are missing
+            // from the catalogue, rather than leaving the corner empty.
+            if let art = FoodArt.art(pawAsset) ?? FoodArt.art("hands") {
                 Image(uiImage: art).resizable().scaledToFit()
                     // y shifted +13 from the brief: that box stopped 13 units
                     // short of the artboard's true bottom edge, leaving a gap

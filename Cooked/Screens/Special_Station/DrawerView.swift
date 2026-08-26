@@ -84,7 +84,8 @@ struct DrawerView: View {
 
                 if showsCloseButton {
                     StorageBackButton(geo: geo, action: onClose)
-                    StorageHands(inventory: inventory, geo: geo)
+                    StorageHands(inventory: inventory, geo: geo,
+                             pawAsset: session?.localPawAsset ?? ChefCast.paw(seat: 0, roomCode: ""))
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)

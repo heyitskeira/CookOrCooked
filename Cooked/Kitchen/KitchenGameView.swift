@@ -71,13 +71,6 @@ struct KitchenGameView: View {
                     .transition(.opacity)
                 }
 
-                if showDrawer {
-                    DrawerView(inventory: inventory, box: drawerBox, session: session, onClose: {
-                        withAnimation(.easeInOut(duration: 0.2)) { showDrawer = false }
-                    })
-                    .transition(.opacity)
-                }
-
                 // Stations rebuilt against final art get their own
                 // full-screen page (see the .fullScreenCover below) — every
                 // other one still uses this small popup over the dimmed

@@ -299,17 +299,29 @@ enum FoodArt {
 
     /// Real artwork for an ingredient id, or nil while it's still a symbol.
     ///
-    /// Cached because UIKit remembers asset-catalog *hits* but not *misses*,
-    /// and right now every one of these is a miss — fourteen full bundle
-    /// searches per redraw, on every frame of the card animation, otherwise.
+    /// Only the *misses* are remembered, and deliberately so. UIKit already
+    /// caches asset-catalog hits, and its cache is purgeable — it hands the
+    /// memory back when the system asks. What UIKit does not remember is a
+    /// name that matched nothing, and right now most of these match nothing:
+    /// without `absent` that is a full bundle search per icon per redraw, on
+    /// every frame of an animation.
+    ///
+    /// An earlier version cached the `UIImage` itself. That defeated the
+    /// purpose — a strong reference in a static dictionary is exactly what
+    /// stops the system reclaiming a bitmap under pressure, and with the
+    /// recipe book's artwork now in the catalog it would have pinned every
+    /// piece of it in memory for the life of the process.
     static func art(_ id: String) -> UIImage? {
-        if let known = cache[id] { return known }
-        let found = UIImage(named: id)
-        cache[id] = found
+        if absent.contains(id) { return nil }
+        guard let found = UIImage(named: id) else {
+            absent.insert(id)
+            return nil
+        }
         return found
     }
 
-    private static var cache: [String: UIImage?] = [:]
+    /// Ids known to have no imageset. Names only — no images are held here.
+    private static var absent: Set<String> = []
 
     /// Turns "maceratedStrawberries" into "Macerated strawberries" so a new
     /// ingredient never has to be spelled out twice.

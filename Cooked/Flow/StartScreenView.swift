@@ -92,7 +92,11 @@ struct StartScreenView: View {
             .fullScreenCover(item: $resumable) { saved in
                 ResumeKitchenView(saved: saved)
             }
-            .sheet(isPresented: $showSettings) {
+            // Full screen rather than a sheet: settings is a painted forest
+            // scene composed edge to edge, and a sheet would letterbox it into
+            // a card with someone else's chrome around it. It also matches how
+            // every other screen in the flow is presented.
+            .fullScreenCover(isPresented: $showSettings) {
                 SettingsView()
             }
         }

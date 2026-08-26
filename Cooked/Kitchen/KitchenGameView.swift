@@ -34,6 +34,10 @@ struct KitchenGameView: View {
     // The prep just produced, awaiting the "hands vs station" choice.
     @State private var finishedPrep: PrepResult?
     @State private var showRecipe = false
+    // The recipe step whose page is open inside that overlay, if any. Held
+    // here rather than in the spread so closing the overlay can't strand a
+    // step's page open behind it.
+    @State private var openRecipeStep: BookStep?
     // Raised when a chef carrying rot taps anywhere but the bin.
     @State private var showRottenAlert = false
 
@@ -96,22 +100,57 @@ struct KitchenGameView: View {
                 // anyone else would just see the "waiting for head chef"
                 // placeholder, which defeats the point of checking it.
                 if showRecipe {
-                    RecipeSpreadView(session: session)
-                        .padding(20)
-                        .transition(.opacity)
-                        .zIndex(3)
-                        .overlay(alignment: .topTrailing) {
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.15)) { showRecipe = false }
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 16, weight: .bold))
-                                    .foregroundStyle(AppTheme.cream)
-                                    .frame(width: 40, height: 40)
-                                    .background(Circle().fill(AppTheme.ink.opacity(0.85)))
-                            }
-                            .padding(18)
+                    ZStack {
+                        // The book is scaled to fit, so it leaves wide gutters
+                        // either side. Without something in them, taps land on
+                        // the SpriteKit scene underneath and the chef walks off
+                        // while the recipe is up.
+                        Color.black.opacity(0.5)
+                            .ignoresSafeArea()
+                            .contentShape(Rectangle())
+                            .onTapGesture { }
+
+                        // Mid-match the book is a reference, so a step's page
+                        // replaces the list in place rather than pushing the
+                        // chef somewhere new.
+                        if let step = openRecipeStep {
+                            StepDetailView(step: step)
+                                .padding(20)
+                        } else {
+                            RecipeSpreadView(session: session,
+                                             openStep: $openRecipeStep)
+                                .padding(20)
                         }
+                    }
+                    .transition(.opacity)
+                    .zIndex(3)
+                    .overlay(alignment: .topTrailing) {
+                        // One button, two jobs, because the pages are a stack:
+                        // from a step it goes back to the list, from the list
+                        // it shuts the book. Reading a step no longer dismisses
+                        // on a stray tap, so this is the only way back out of
+                        // one — it can't just close everything.
+                        let onStepPage = openRecipeStep != nil
+
+                        Button {
+                            withAnimation(.easeInOut(duration: onStepPage ? 0.28 : 0.15)) {
+                                if onStepPage {
+                                    openRecipeStep = nil
+                                } else {
+                                    showRecipe = false
+                                }
+                            }
+                        } label: {
+                            Image(systemName: onStepPage ? "chevron.left" : "xmark")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(AppTheme.cream)
+                                .frame(width: 40, height: 40)
+                                .background(Circle().fill(AppTheme.ink.opacity(0.85)))
+                        }
+                        .padding(18)
+                        .accessibilityLabel(onStepPage ? "Back to the recipe"
+                                                       : "Close the recipe")
+                    }
                 }
 
                 if showRottenAlert {
@@ -133,7 +172,11 @@ struct KitchenGameView: View {
                         }
                     )
                     .transition(.opacity)
-                    .zIndex(2)
+                    // Above the recipe book (3). The clock can run out while
+                    // the head chef has the book open, and the results screen
+                    // carries the only way back to the start — underneath the
+                    // book it would be unreachable.
+                    .zIndex(5)
                 }
 
                 // The kitchen is held still because the host stepped away. This
@@ -178,6 +221,15 @@ struct KitchenGameView: View {
             // already frozen builds the scene *after* the pause began.
             .onChange(of: session.isFrozen, initial: true) { _, frozen in
                 scene?.setFrozen(frozen)
+            }
+            // The clock can run out with the recipe book open. The results
+            // screen sits above it either way, but leaving the book open
+            // behind means it is still there if the player dismisses.
+            .onChange(of: session.snapshot.isOver) { _, over in
+                if over {
+                    showRecipe = false
+                    openRecipeStep = nil
+                }
             }
         }
     }

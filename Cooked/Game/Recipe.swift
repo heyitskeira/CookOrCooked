@@ -207,7 +207,7 @@ nonisolated enum Recipe {
     // ---- Tuning knobs. These are the numbers to play with. ----
     
     static let timeLimit: TimeInterval = 900      // 15 minutes
-    static let showRecipeChecklist = true         // set false to simulate hidden recipe
+    static let showRecipeChecklist = false         // set false to simulate hidden recipe
     static let chefSpeed: CGFloat = 240           // points per second
     
     // ---- The 14 actions ----

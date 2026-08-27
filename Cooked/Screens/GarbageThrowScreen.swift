@@ -2,21 +2,26 @@
 //  GarbageThrowScreen.swift
 //  Cooked
 //
-//  The garbage bin's minigame: throwing the rotten thing away, first person.
+//  The garbage bin's minigame: throwing the rotten thing away.
 //
-//  You are looking at the bin a few metres ahead with the trash in your hand.
-//  TILT the phone to shift your stance — roll slides you sideways, pitch walks
-//  you closer or further — until the bin sits in the middle of the screen.
-//  Then TAP AND HOLD: the power meter sweeps up and back down, and letting go
-//  decides how far the throw carries. Land it in the bin and the rot is gone.
+//  The bin stands across the clearing and slides left and right along a rail.
+//  TILT the phone to steer it — roll left, the bin goes left — and hold it
+//  level to keep the bin over the centre line, straight above your hands. Then
+//  TAP AND HOLD: a power meter sweeps up and back down, and letting go throws
+//  the rot straight up. Land it in the bin and it's gone.
 //
 //  A miss costs nothing but time, which is the whole point: the bin never takes
 //  the trash off you, so a bad thrower keeps the station (and anybody queueing
 //  behind them) until they land one.
 //
-//  Everything is drawn from flat nodes — the "3D" is one scale factor per
-//  depth, applied to the bin's size, its height on screen, and the trash in
-//  flight. No camera, no physics engine.
+//  Two things have to be right at the moment you let go: the bin has to be
+//  centred (that is the tilt), and the power has to carry the throw up to the
+//  bin's row (that is the timing). Neither alone is enough.
+//
+//  Rebuilt against final art — the dark clearing, the wooden bin, the paws —
+//  replacing the earlier first-person depth-aiming version. The bin now moves
+//  on one axis, which is what the tutorial ("tilt left / centre / tilt right")
+//  teaches.
 //
 
 import SpriteKit
@@ -24,60 +29,58 @@ import CoreMotion
 
 // MARK: - Tuning
 //
-// These are the numbers to play with. Distances are in metres so the maths
-// reads like the room it's pretending to be.
+// The numbers to play with. Fractions of the screen, so they hold on any size.
 
 private enum Throwing {
 
-    /// How far away the bin stands when you walk up to it.
-    static let restDepth = 6.0
-    /// How far tilting can walk you in and out, and slide you side to side.
-    static let stepRange = 2.0
-    static let strafeRange = 1.8
-    /// Clamps, so nobody tilts their way into the bin or out of the kitchen.
-    static let nearestDepth = 3.2
-    static let farthestDepth = 9.0
+    /// How far the bin can slide from the centre, as a fraction of screen width.
+    static let railHalfWidth = 0.30
+    /// The bin's row and the hands' row, as fractions of height above centre.
+    static let binRowAboveCentre = 0.05
+    static let handsBelowCentre = 0.30
 
-    /// The depth that draws at scale 1. Everything nearer looks bigger.
-    static let focalDepth = 6.0
+    /// The bin is drawn this wide (points); its height follows the art's ratio.
+    static let binWidth = 104.0
+    static let binArtRatio = 137.0 / 112.0     // ui-empty-garbage-bin @1x
 
-    /// What the power meter maps onto, end to end.
-    static let minThrow = 2.5
-    static let maxThrow = 10.5
-    /// Seconds for the meter to sweep all the way up and back down.
+    /// Seconds for the power meter to sweep all the way up and back down.
     static let chargeCycle = 1.15
+    /// The power that just reaches the bin's row. Below 1 so a good throw sits
+    /// mid-sweep, not at the very top where it's hardest to release on time.
+    static let powerToReachBin = 0.8
 
     /// How wrong you can be and still land it. Generous on purpose: there is no
-    /// walking away from the bin, so a chef who cannot hit it is a chef who
-    /// cannot play.
-    static let lateralTolerance = 0.5      // metres either side of the middle
-    static let depthTolerance = 1.15       // metres short or long
+    /// walking away from the bin, so a chef who cannot hit it cannot play.
+    static let centreTolerance = 0.11    // fraction of screen width, either side
+    static let heightTolerance = 0.09    // fraction of screen height, short/long
 
-    /// Tilt handling: how much of a stance a given tilt buys, how still counts
-    /// as still, and how hard the reading is smoothed.
+    /// Tilt handling: how much stance a tilt buys, what counts as still, and how
+    /// hard the reading is smoothed.
     static let tiltSensitivity = 2.4
-    static let tiltDeadzone = 0.035
+    static let tiltDeadzone = 0.03
     static let tiltSmoothing = 0.16
 
-    /// A tap shorter than this isn't a throw — it's a slip, a stray touch, or a
-    /// finger brushing the screen. Charging just stops and you keep the shot.
+    /// A tap shorter than this isn't a throw — it's a slip. Charging just stops
+    /// and you keep the shot.
     static let minimumCharge = 0.18
 
-    static let flightTime = 0.75
-    static let missPause = 1.25
+    static let flightTime = 0.6
+    static let missPause = 1.1
+    /// How long the how-to card stays up when the screen opens.
+    static let tutorialSeconds = 2.6
 }
 
 // MARK: - The screen
 
 final class GarbageThrowOverlay: StationOverlay {
 
-    /// Where the throw is up to. The whole screen is this one state machine.
     private enum Phase {
         case calibrating   // waiting for the first gravity reading to set neutral
-        case aiming        // tilting the bin into the middle
+        case aiming        // steering the bin
         case charging      // finger down, meter sweeping
-        case flying        // it's in the air
+        case flying        // the rot is in the air
         case missed        // short pause, then back to aiming
+        case landed        // it went in
     }
 
     private var phase: Phase = .calibrating
@@ -85,257 +88,266 @@ final class GarbageThrowOverlay: StationOverlay {
     // ---- Tilt ----
 
     private let motionManager = CMMotionManager()
-    /// The pose the player was holding when the screen opened. Aim is measured
-    /// from THIS, not from flat: a phone held at 45° on a couch and one flat on
-    /// a table must both start pointing at the bin.
+    /// The pose held when the screen opened. Steering is measured from THIS,
+    /// not from flat, so a phone held at an angle still starts centred.
     private var neutral: CMAcceleration?
-    /// Smoothed, calibrated tilt in -1...1 on each axis.
-    private var tilt = CGPoint.zero
-    /// Screen-space sign of the device axes, fixed at calibration time —
-    /// landscape-left and landscape-right disagree about which way is right.
-    private var tiltSign: CGFloat = 1
-    /// No gyro (the simulator, mostly). Aim with a dragged finger instead so
-    /// the geometry is still testable.
+    private var tilt = 0.0            // smoothed, calibrated, -1...1
+    private var tiltSign = 1.0        // landscape-left vs -right flip
     private var usesTouchAiming = false
 
-    // ---- Where you stand, and what you threw ----
+    // ---- State ----
 
-    /// x = metres sidestepped, y = metres walked forward.
-    private var stance = CGPoint.zero
     private var power = 0.0
     private var chargeTime = 0.0
     private var flightProgress = 0.0
     private var missTimer = 0.0
+    private var tutorialTimer = 0.0
     private var attempt = 1
-    /// The throw being animated: how far it carries, and how far off-centre the
-    /// thrower was standing.
-    private var thrownDistance = 0.0
-    private var thrownLateral = 0.0
+    /// Snapshot of the shot at the instant of release.
+    private var thrownFromX = 0.0
+    private var thrownPeakY = 0.0
+    private var binXAtThrow = 0.0
 
     // ---- Drawing ----
 
-    private let floorNode = SKSpriteNode()
-    private let horizonNode = SKSpriteNode()
-    private let binNode = SKNode()
-    private let binBody = SKShapeNode()
-    private let binMouth = SKShapeNode()
+    private let binNode = SKSpriteNode()
     private let binShadow = SKShapeNode()
-    private let arcNode = SKShapeNode()
-    /// The throw's shadow on the floor. In a first-person view the trash flies
-    /// straight up the centre line, so height on screen alone can't say whether
-    /// it's rising or going long — the shadow travelling towards the horizon is
-    /// what actually reads as distance.
-    private let flightShadow = SKShapeNode(ellipseOf: CGSize(width: 46, height: 16))
-    /// Where this much power would drop it. The dashed track ends here.
-    private let landingRing = SKShapeNode(ellipseOf: CGSize(width: 54, height: 20))
-    private let trashNode = SKLabelNode(text: "🤢")
+    private let railNode = SKShapeNode()
+    private let centreTick = SKShapeNode()
+    private let aimLine = SKShapeNode()
+    private let handsNode = SKSpriteNode()
+    private let barfNode = SKLabelNode(text: "🤢")
     private let powerTrack = SKSpriteNode()
     private let powerFill = SKSpriteNode()
     private let statusLabel = SKLabelNode(fontNamed: "SFProText-Bold")
     private let attemptLabel = SKLabelNode(fontNamed: "SFProText-Regular")
+    private let tutorialNode = SKSpriteNode()
 
-    private var horizonY = 0.0
-    private var groundDrop = 0.0
-    private var pixelsPerMetre = 0.0
-    private var handY = 0.0
-    private var screenWidth = 0.0
+    private var screenW = 0.0
+    private var screenH = 0.0
+    private var binRowY = 0.0
+    private var handsY = 0.0
+    private var binSize = CGSize.zero
 
     // MARK: Setup
 
     override func setUpStation() {
-        amountNeeded = 1                     // one throw in, and you're done
-        hintWhenIdle = "Tilt to line up the bin · hold to throw"
-        hintWhenWorking = "Let go at the right power"
+        amountNeeded = 1                       // one throw in, and you're done
+        hintWhenIdle = "Tilt to centre the bin · hold to throw"
+        hintWhenWorking = "Let go with the power on the bin"
         hintWhenDone = "In the bin!"
 
-        screenWidth = Double(background.size.width)
-        let height = Double(background.size.height)
+        screenW = Double(background.size.width)
+        screenH = Double(background.size.height)
+        binRowY = centerY + screenH * Throwing.binRowAboveCentre
+        handsY = centerY - screenH * Throwing.handsBelowCentre
+        binSize = CGSize(width: Throwing.binWidth,
+                         height: Throwing.binWidth * Throwing.binArtRatio)
 
         // The base class's prop and progress bar belong to a hold-to-work
-        // screen. This one has a room to draw and a power meter of its own.
+        // screen. This one draws its own room and its own meter.
         prop.isHidden = true
         barBackground.isHidden = true
         barFill.isHidden = true
 
-        horizonY = centerY + height * 0.12
-        groundDrop = height * 0.20
-        pixelsPerMetre = screenWidth * 0.17
-        handY = centerY - height * 0.32
-
-        buildRoom(width: screenWidth, height: height)
+        setBackdrop()
+        buildRail()
         buildBin()
-        buildAimAids()
+        buildHandsAndBarf()
+        buildMeter()
+        buildTutorial()
 
         startTilt()
     }
 
-    private func buildRoom(width: Double, height: Double) {
-        // Floor: everything below the horizon. Slightly lighter than the walls
-        // so the bin has something to stand on.
-        floorNode.color = SKColor(red: 0.17, green: 0.16, blue: 0.19, alpha: 1)
-        floorNode.size = CGSize(width: width, height: height)
-        floorNode.anchorPoint = CGPoint(x: 0.5, y: 1)
-        floorNode.position = CGPoint(x: centerX, y: horizonY)
-        floorNode.zPosition = 1
-        addChild(floorNode)
+    private func setBackdrop() {
+        if let art = UIImage(named: "ui-dark-blank-layout") {
+            background.texture = SKTexture(image: art)
+            background.colorBlendFactor = 0
+        }
+    }
 
-        horizonNode.color = SKColor(white: 0.32, alpha: 1)
-        horizonNode.size = CGSize(width: width, height: 2)
-        horizonNode.position = CGPoint(x: centerX, y: horizonY)
-        horizonNode.zPosition = 2
-        addChild(horizonNode)
+    /// The rail the bin rides, and the centre tick that marks "straight above
+    /// your hands" — without it "keep it centred" is a guess, and the whole
+    /// game is that judgement.
+    private func buildRail() {
+        let half = screenW * Throwing.railHalfWidth
+        let rail = CGMutablePath()
+        rail.move(to: CGPoint(x: centerX - half, y: binRowY))
+        rail.addLine(to: CGPoint(x: centerX + half, y: binRowY))
+        railNode.path = rail
+        railNode.strokeColor = SKColor(white: 1, alpha: 0.28)
+        railNode.lineWidth = 3
+        railNode.lineCap = .round
+        railNode.zPosition = 2
+        addChild(railNode)
 
-        // A centre line to aim down. Without it "line the bin up in the middle"
-        // is a guess, and the whole game is that judgement.
-        let centreLine = SKSpriteNode(color: SKColor(white: 1, alpha: 0.12),
-                                      size: CGSize(width: 1.5, height: horizonY - handY))
-        centreLine.anchorPoint = CGPoint(x: 0.5, y: 0)
-        centreLine.position = CGPoint(x: centerX, y: handY)
-        centreLine.zPosition = 2
-        addChild(centreLine)
+        centreTick.path = CGPath(rect: CGRect(x: -2, y: -10, width: 4, height: 20), transform: nil)
+        centreTick.fillColor = SKColor(red: 0.55, green: 0.85, blue: 0.45, alpha: 0.9)
+        centreTick.strokeColor = .clear
+        centreTick.position = CGPoint(x: centerX, y: binRowY)
+        centreTick.zPosition = 3
+        addChild(centreTick)
+
+        // The faint vertical thread from the paws up to the centre of the rail:
+        // the path the rot will take, so aiming reads as "put the bin on this
+        // line". It brightens while charging.
+        aimLine.strokeColor = SKColor(white: 1, alpha: 0.1)
+        aimLine.lineWidth = 2
+        aimLine.zPosition = 2
+        let thread = CGMutablePath()
+        thread.move(to: CGPoint(x: centerX, y: handsY))
+        thread.addLine(to: CGPoint(x: centerX, y: binRowY))
+        aimLine.path = thread.copy(dashingWithPhase: 0, lengths: [7, 8])
+        addChild(aimLine)
     }
 
     private func buildBin() {
-        binShadow.path = CGPath(ellipseIn: CGRect(x: -46, y: -12, width: 92, height: 24),
+        binShadow.path = CGPath(ellipseIn: CGRect(x: -binSize.width * 0.42, y: -10,
+                                                  width: binSize.width * 0.84, height: 20),
                                 transform: nil)
-        binShadow.fillColor = SKColor(white: 0, alpha: 0.35)
+        binShadow.fillColor = SKColor(white: 0, alpha: 0.33)
         binShadow.strokeColor = .clear
         binShadow.zPosition = 3
-        binNode.addChild(binShadow)
+        addChild(binShadow)
 
-        // A plain tapered bin: body, then a darker ellipse for the mouth so you
-        // can see you're throwing INTO something.
-        binBody.path = CGPath(roundedRect: CGRect(x: -38, y: 0, width: 76, height: 74),
-                              cornerWidth: 8, cornerHeight: 8, transform: nil)
-        binBody.fillColor = SKColor(red: 0.36, green: 0.42, blue: 0.40, alpha: 1)
-        binBody.strokeColor = SKColor(white: 0.08, alpha: 1)
-        binBody.lineWidth = 3
-        binBody.zPosition = 4
-        binNode.addChild(binBody)
-
-        binMouth.path = CGPath(ellipseIn: CGRect(x: -38, y: 62, width: 76, height: 24),
-                               transform: nil)
-        binMouth.fillColor = SKColor(red: 0.13, green: 0.15, blue: 0.15, alpha: 1)
-        binMouth.strokeColor = SKColor(white: 0.08, alpha: 1)
-        binMouth.lineWidth = 3
-        binMouth.zPosition = 5
-        binNode.addChild(binMouth)
-
-        binNode.zPosition = 3
+        binNode.texture = emptyBinTexture
+        binNode.size = binSize
+        binNode.anchorPoint = CGPoint(x: 0.5, y: 0)   // sits ON the rail
+        binNode.zPosition = 4
         addChild(binNode)
     }
 
-    private func buildAimAids() {
-        arcNode.strokeColor = SKColor(red: 0.45, green: 0.75, blue: 1, alpha: 0.75)
-        arcNode.lineWidth = 2.5
-        arcNode.zPosition = 6
-        arcNode.isHidden = true
-        addChild(arcNode)
+    private func buildHandsAndBarf() {
+        if let art = UIImage(named: "hands") {
+            handsNode.texture = SKTexture(image: art)
+            let w = screenW * 0.2
+            handsNode.size = CGSize(width: w, height: w * (art.size.height / art.size.width))
+            handsNode.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+            handsNode.position = CGPoint(x: centerX, y: handsY - handsNode.size.height * 0.3)
+            handsNode.zPosition = 7
+            addChild(handsNode)
+        }
 
-        flightShadow.fillColor = SKColor(white: 0, alpha: 0.4)
-        flightShadow.strokeColor = .clear
-        flightShadow.zPosition = 4
-        flightShadow.isHidden = true
-        addChild(flightShadow)
+        barfNode.fontSize = 46
+        barfNode.verticalAlignmentMode = .center
+        barfNode.horizontalAlignmentMode = .center
+        barfNode.position = CGPoint(x: centerX, y: handsY)
+        barfNode.zPosition = 8
+        addChild(barfNode)
+    }
 
-        landingRing.fillColor = .clear
-        landingRing.strokeColor = SKColor(red: 0.45, green: 0.75, blue: 1, alpha: 0.8)
-        landingRing.lineWidth = 2.5
-        landingRing.zPosition = 6
-        landingRing.isHidden = true
-        addChild(landingRing)
+    private func buildMeter() {
+        let meterWidth = min(320.0, screenW - 140)
+        let meterY = handsY - 54
 
-        trashNode.fontSize = 44
-        trashNode.verticalAlignmentMode = .center
-        trashNode.position = CGPoint(x: centerX, y: handY)
-        trashNode.zPosition = 8
-        addChild(trashNode)
-
-        let meterWidth = min(300.0, screenWidth - 120)
-        powerTrack.color = SKColor(white: 0.24, alpha: 1)
+        powerTrack.color = SKColor(white: 0.22, alpha: 0.9)
         powerTrack.size = CGSize(width: meterWidth, height: 12)
-        powerTrack.position = CGPoint(x: centerX, y: handY - 46)
+        powerTrack.position = CGPoint(x: centerX, y: meterY)
         powerTrack.zPosition = 7
         addChild(powerTrack)
 
-        powerFill.color = SKColor.orange
+        powerFill.color = .orange
         powerFill.size = CGSize(width: meterWidth, height: 12)
         powerFill.anchorPoint = CGPoint(x: 0, y: 0.5)
-        powerFill.position = CGPoint(x: centerX - meterWidth / 2, y: handY - 46)
+        powerFill.position = CGPoint(x: centerX - meterWidth / 2, y: meterY)
         powerFill.xScale = 0.0001
         powerFill.zPosition = 8
         addChild(powerFill)
 
-        statusLabel.fontSize = 20
-        statusLabel.fontColor = SKColor(red: 1, green: 0.72, blue: 0.35, alpha: 1)
-        statusLabel.position = CGPoint(x: centerX, y: centerY + 34)
+        // A mark on the meter at the power that reaches the bin, so the target
+        // is on the meter and not just felt out.
+        let sweet = SKSpriteNode(color: SKColor(red: 0.55, green: 0.85, blue: 0.45, alpha: 0.95),
+                                 size: CGSize(width: 3, height: 20))
+        sweet.position = CGPoint(x: centerX - meterWidth / 2 + meterWidth * Throwing.powerToReachBin,
+                                 y: meterY)
+        sweet.zPosition = 9
+        addChild(sweet)
+
+        statusLabel.fontSize = 22
+        statusLabel.fontColor = SKColor(red: 1, green: 0.78, blue: 0.4, alpha: 1)
+        statusLabel.position = CGPoint(x: centerX, y: centerY - screenH * 0.02)
         statusLabel.zPosition = 9
-        statusLabel.text = "Hold still…"
+        statusLabel.text = ""
         addChild(statusLabel)
 
         attemptLabel.fontSize = 13
-        attemptLabel.fontColor = SKColor(white: 0.5, alpha: 1)
-        attemptLabel.position = CGPoint(x: centerX, y: handY - 72)
+        attemptLabel.fontColor = SKColor(white: 0.55, alpha: 1)
+        attemptLabel.position = CGPoint(x: centerX, y: meterY - 26)
         attemptLabel.zPosition = 9
         attemptLabel.text = ""
         addChild(attemptLabel)
+    }
+
+    /// The how-to card: shown on open, tap or wait to dismiss. The art carries
+    /// its own labels (tilt left / centre / tilt right, press to control power).
+    private func buildTutorial() {
+        guard let art = UIImage(named: "ui-garbage-bin-tutorial") else { return }
+        tutorialNode.texture = SKTexture(image: art)
+        let w = screenW * 0.9
+        tutorialNode.size = CGSize(width: w, height: w * (art.size.height / art.size.width))
+        tutorialNode.position = CGPoint(x: centerX, y: centerY)
+        tutorialNode.zPosition = 40
+        addChild(tutorialNode)
+
+        let dim = SKSpriteNode(color: SKColor(white: 0, alpha: 0.45), size: background.size)
+        dim.position = CGPoint(x: centerX, y: centerY)
+        dim.zPosition = 39
+        dim.name = "tutorialDim"
+        addChild(dim)
+
+        tutorialTimer = Throwing.tutorialSeconds
+    }
+
+    private lazy var emptyBinTexture: SKTexture? =
+        UIImage(named: "ui-empty-garbage-bin").map { SKTexture(image: $0) }
+    private lazy var filledBinTexture: SKTexture? =
+        UIImage(named: "ui-filled-garbage-bin").map { SKTexture(image: $0) }
+
+    private var tutorialShowing: Bool { tutorialTimer > 0 }
+
+    private func dismissTutorial() {
+        tutorialTimer = 0
+        tutorialNode.run(.fadeOut(withDuration: 0.2)) { [weak self] in
+            self?.tutorialNode.isHidden = true
+        }
+        childNode(withName: "tutorialDim")?.run(.fadeOut(withDuration: 0.2))
     }
 
     // MARK: Tilt
 
     private func startTilt() {
         guard motionManager.isDeviceMotionAvailable else {
-            // No gyro: drag to aim instead. Same numbers, different input, so
-            // the geometry can still be checked in the simulator.
+            // No gyro (the simulator): drag to steer instead, same geometry.
             usesTouchAiming = true
-            phase = .aiming
-            statusLabel.text = "Drag to line up · hold to throw"
+            hintWhenIdle = "Drag to centre the bin · hold to throw"
             return
         }
-
-        // Landscape-left and landscape-right hold the device's axes the
-        // opposite way round, so the same roll means opposite directions.
         if let orientation = scene?.view?.window?.windowScene?.interfaceOrientation,
            orientation == .landscapeLeft {
             tiltSign = -1
         }
-
         motionManager.deviceMotionUpdateInterval = 1.0 / 60.0
-        motionManager.startDeviceMotionUpdates(to: OperationQueue.main) { [weak self] motion, _ in
+        motionManager.startDeviceMotionUpdates(to: .main) { [weak self] motion, _ in
             guard let self, let motion else { return }
             self.readGravity(motion.gravity)
         }
     }
 
-    /// Turn the gravity vector into a stance, measured from the pose the player
-    /// was already holding.
+    /// Gravity → a steer in -1...1, measured from the opening pose.
     private func readGravity(_ gravity: CMAcceleration) {
         guard let neutral else {
-            // First reading in: that's neutral, and the game can start.
             self.neutral = gravity
-            if phase == .calibrating {
-                phase = .aiming
-                statusLabel.text = ""
-            }
+            if phase == .calibrating { phase = .aiming }
             return
         }
-
-        // In landscape the device's long axis (y) runs across the screen, and
-        // rolling about it (x) tips the view towards and away from you.
+        // In landscape the device's long axis (y) runs across the screen.
         var sideways = (gravity.y - neutral.y) * Throwing.tiltSensitivity * tiltSign
-        var forwards = (gravity.x - neutral.x) * Throwing.tiltSensitivity * tiltSign
-
         if abs(sideways) < Throwing.tiltDeadzone { sideways = 0 }
-        if abs(forwards) < Throwing.tiltDeadzone { forwards = 0 }
-
-        // Low-pass, or the bin jitters with the player's pulse.
-        tilt.x += (clamp(sideways) - tilt.x) * Throwing.tiltSmoothing
-        tilt.y += (clamp(forwards) - tilt.y) * Throwing.tiltSmoothing
+        tilt += (clamp(sideways) - tilt) * Throwing.tiltSmoothing
     }
 
-    private func clamp(_ value: Double) -> Double {
-        min(1, max(-1, value))
-    }
+    private func clamp(_ v: Double) -> Double { min(1, max(-1, v)) }
 
     override func cleanUp() {
         motionManager.stopDeviceMotionUpdates()
@@ -344,19 +356,17 @@ final class GarbageThrowOverlay: StationOverlay {
     // MARK: Input
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if tutorialShowing { dismissTutorial(); return }
         guard phase == .aiming else { return }
         phase = .charging
         chargeTime = 0
         power = 0
-        statusLabel.text = ""
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        // Only when there's no gyro to aim with.
         guard usesTouchAiming, let touch = touches.first else { return }
         let point = touch.location(in: self)
-        tilt.x = clamp((Double(point.x) - centerX) / (screenWidth * 0.35))
-        tilt.y = clamp((Double(point.y) - centerY) / (groundDrop * 2))
+        tilt = clamp((Double(point.x) - centerX) / (screenW * Throwing.railHalfWidth))
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -371,46 +381,50 @@ final class GarbageThrowOverlay: StationOverlay {
 
     // MARK: The throw
 
+    private var binX: Double { centerX + tilt * screenW * Throwing.railHalfWidth }
+
+    /// The height a given power carries the rot to, measured up from the hands.
+    /// `powerToReachBin` is the power that reaches the bin exactly.
+    private func peakY(for power: Double) -> Double {
+        let reach = (binRowY - handsY) / Throwing.powerToReachBin
+        return handsY + power * reach
+    }
+
     private func release() {
         guard chargeTime >= Throwing.minimumCharge else {
             phase = .aiming
-            arcNode.isHidden = true
             return
         }
-        thrownDistance = Throwing.minThrow + power * (Throwing.maxThrow - Throwing.minThrow)
-        // You throw straight ahead, so where you were standing IS your aim.
-        thrownLateral = stance.x
+        thrownFromX = centerX          // the rot leaves the hands, straight up
+        thrownPeakY = peakY(for: power)
+        binXAtThrow = binX
         flightProgress = 0
         phase = .flying
-        arcNode.isHidden = true
-        trashNode.isHidden = false
     }
 
-    /// Did it go in? Two independent errors: how far off the middle you stood,
-    /// and how far short or long you threw.
+    /// Did it go in? Two independent errors: how far the bin sat off centre,
+    /// and how far short or long the throw carried.
     private func land() {
-        let sideError = abs(thrownLateral)
-        let depthError = thrownDistance - binDepth
+        let sideError = abs(binXAtThrow - centerX)
+        let heightError = thrownPeakY - binRowY
 
-        if sideError <= Throwing.lateralTolerance && abs(depthError) <= Throwing.depthTolerance {
+        if sideError <= screenW * Throwing.centreTolerance
+            && abs(heightError) <= screenH * Throwing.heightTolerance {
             statusLabel.text = "Straight in!"
-            trashNode.isHidden = true
-            binNode.run(.sequence([.scaleY(to: binNode.yScale * 0.88, duration: 0.08),
-                                   .scaleY(to: binNode.yScale, duration: 0.12)]))
-            // Handing the base class a full bar is what completes the action:
-            // its own update() sees it and runs the finish/announce pipeline.
-            amountDone = amountNeeded
+            barfNode.isHidden = true
+            binNode.texture = filledBinTexture
+            binNode.run(.sequence([.scaleY(to: 0.9, duration: 0.08),
+                                   .scaleY(to: 1, duration: 0.12)]))
+            phase = .landed
+            amountDone = amountNeeded      // the base class runs the finish pipeline
             return
         }
 
-        // Name the mistake. A miss you can't read teaches nothing, and there is
-        // no way out of this screen but a hit.
-        if sideError > Throwing.lateralTolerance {
-            statusLabel.text = thrownLateral > 0 ? "Wide right!" : "Wide left!"
+        if sideError > screenW * Throwing.centreTolerance {
+            statusLabel.text = binXAtThrow > centerX ? "Bin too far right!" : "Bin too far left!"
         } else {
-            statusLabel.text = depthError < 0 ? "Too short!" : "Too far!"
+            statusLabel.text = heightError < 0 ? "Too soft!" : "Too hard!"
         }
-
         attempt += 1
         attemptLabel.text = "Attempt \(attempt)"
         missTimer = 0
@@ -422,159 +436,73 @@ final class GarbageThrowOverlay: StationOverlay {
 
     // MARK: Every frame
 
-    override func readInput(secondsSinceLastFrame: Double) {
+    override func readInput(secondsSinceLastFrame dt: Double) {
         isWorking = phase == .charging
 
+        if tutorialShowing {
+            tutorialTimer -= dt
+            if tutorialTimer <= 0 { dismissTutorial() }
+            return
+        }
+
         switch phase {
-        case .calibrating:
+        case .calibrating, .aiming, .landed:
             break
-
-        case .aiming:
-            applyStance()
-
         case .charging:
-            applyStance()
-            // The meter sweeps up and back down for as long as you hold, so
-            // there's always another pass coming if you miss the one you wanted.
-            chargeTime += secondsSinceLastFrame
+            chargeTime += dt
             let sweep = chargeTime.truncatingRemainder(dividingBy: Throwing.chargeCycle)
             let half = Throwing.chargeCycle / 2
             power = sweep < half ? sweep / half : (Throwing.chargeCycle - sweep) / half
-
         case .flying:
-            flightProgress += secondsSinceLastFrame / Throwing.flightTime
-            if flightProgress >= 1 {
-                flightProgress = 1
-                land()
-            }
-
+            flightProgress += dt / Throwing.flightTime
+            if flightProgress >= 1 { flightProgress = 1; land() }
         case .missed:
-            missTimer += secondsSinceLastFrame
+            missTimer += dt
             if missTimer >= Throwing.missPause {
                 statusLabel.text = ""
+                barfNode.isHidden = false
                 phase = .aiming
             }
         }
     }
 
-    /// Tilt → where you're standing. Stepping forward is capped so the bin
-    /// can't be walked into or out of the room.
-    private func applyStance() {
-        stance.x = tilt.x * Throwing.strafeRange
-        let stepped = tilt.y * Throwing.stepRange
-        let depth = min(Throwing.farthestDepth,
-                        max(Throwing.nearestDepth, Throwing.restDepth - stepped))
-        stance.y = Throwing.restDepth - depth
-    }
-
-    /// How far the bin is from where the chef is standing right now.
-    private var binDepth: Double {
-        Throwing.restDepth - stance.y
-    }
-
-    override func animateProp(secondsSinceLastFrame: Double) {
+    override func animateProp(secondsSinceLastFrame dt: Double) {
         drawBin()
-        drawPowerMeter()
-        drawTrash()
+        drawMeter()
+        drawBarf()
     }
 
     private func drawBin() {
-        let projected = project(depth: binDepth, lateral: 0)
-        binNode.position = projected.point
-        binNode.setScale(projected.scale)
+        binNode.position = CGPoint(x: binX, y: binRowY)
+        binShadow.position = CGPoint(x: binX, y: binRowY - 4)
     }
 
-    private func drawPowerMeter() {
+    private func drawMeter() {
         let showing = phase == .charging
         powerFill.xScale = showing ? max(0.0001, power) : 0.0001
-        powerTrack.alpha = showing ? 1 : 0.35
-        powerFill.color = power > 0.85 ? SKColor.red : SKColor.orange
+        powerTrack.alpha = showing ? 1 : 0.4
+        powerFill.color = power > Throwing.powerToReachBin + 0.08 ? .red : .orange
+        aimLine.strokeColor = SKColor(white: 1, alpha: showing ? 0.3 : 0.1)
     }
 
-    private func drawTrash() {
+    private func drawBarf() {
         switch phase {
         case .flying:
-            trashNode.isHidden = false
-            let travelled = thrownDistance * flightProgress
-            let projected = project(depth: max(0.7, travelled), lateral: thrownLateral)
-            // Straight ahead means it never leaves the centre line — what moves
-            // is the bin, which is the whole read on the shot.
-            let lift = sin(Double.pi * flightProgress) * groundDrop * 1.15 * projected.scale
-            let ground = flightProgress < 0.06
-                ? handY + (projected.point.y - handY) * (flightProgress / 0.06)
-                : projected.point.y
-            trashNode.position = CGPoint(x: projected.point.x, y: ground + lift)
-            trashNode.setScale(max(0.25, projected.scale))
-
-            flightShadow.isHidden = false
-            flightShadow.position = CGPoint(x: projected.point.x, y: ground)
-            flightShadow.setScale(max(0.2, projected.scale))
-            flightShadow.alpha = 0.15 + 0.35 * (1 - sin(Double.pi * flightProgress))
-
-            arcNode.isHidden = true
-            landingRing.isHidden = true
-
-        case .charging:
-            trashNode.position = CGPoint(x: centerX, y: handY)
-            trashNode.setScale(1)
-            flightShadow.isHidden = true
-            drawArcPreview()
-
+            barfNode.isHidden = false
+            // Straight up from the hands to the throw's peak, easing out as it
+            // rises and shrinking a little with distance.
+            let t = flightProgress
+            let eased = 1 - pow(1 - t, 2)
+            let y = handsY + (thrownPeakY - handsY) * eased
+            barfNode.position = CGPoint(x: thrownFromX, y: y)
+            barfNode.setScale(max(0.5, 1 - 0.4 * eased))
+        case .landed:
+            barfNode.isHidden = true
         default:
-            trashNode.isHidden = false
-            trashNode.position = CGPoint(x: centerX, y: handY)
-            trashNode.setScale(1)
-            flightShadow.isHidden = true
-            arcNode.isHidden = true
-            landingRing.isHidden = true
+            barfNode.isHidden = false
+            barfNode.position = CGPoint(x: centerX, y: handsY)
+            barfNode.setScale(1)
         }
-    }
-
-    /// The dashed track along the FLOOR to where this much power drops it, and
-    /// a ring at the landing spot. Truthful on purpose: the difficulty is
-    /// holding a pose and letting go on time, not guessing at hidden numbers.
-    ///
-    /// It draws the ground line rather than the flight path because the flight
-    /// path, seen from behind, is a vertical line — the rise and the distance
-    /// both move the trash up the screen and cancel each other out to the eye.
-    private func drawArcPreview() {
-        let distance = Throwing.minThrow + power * (Throwing.maxThrow - Throwing.minThrow)
-        let path = CGMutablePath()
-        var first = true
-
-        for step in 0...16 {
-            let t = Double(step) / 16
-            let projected = project(depth: max(0.7, distance * t), lateral: stance.x)
-            let y = t < 0.06
-                ? handY + (projected.point.y - handY) * (t / 0.06)
-                : projected.point.y
-            let point = CGPoint(x: projected.point.x, y: y)
-            if first {
-                path.move(to: point)
-                first = false
-            } else {
-                path.addLine(to: point)
-            }
-        }
-
-        arcNode.path = path.copy(dashingWithPhase: 0, lengths: [8, 7])
-        arcNode.isHidden = false
-
-        let landing = project(depth: distance, lateral: stance.x)
-        landingRing.position = landing.point
-        landingRing.setScale(max(0.2, landing.scale))
-        landingRing.isHidden = false
-    }
-
-    /// One depth → one scale, and everything else follows from it: how big a
-    /// thing draws, how far down the screen it sits, and how far off-centre it
-    /// slides as the chef steps sideways.
-    private func project(depth: Double, lateral: Double) -> (point: CGPoint, scale: Double) {
-        let clamped = max(0.7, depth)
-        let scale = Throwing.focalDepth / clamped
-        let x = centerX + (lateral - stance.x) * scale * pixelsPerMetre
-        let y = horizonY - groundDrop * scale
-        return (CGPoint(x: x, y: y), scale)
     }
 }
 
@@ -595,29 +523,20 @@ class GarbageThrowPreviewScene: SKScene {
         overlay?.removeFromParent()
 
         let newOverlay = GarbageThrowOverlay(screenSize: size, actionName: "Throw out the rotten one")
-
-        // Land one and it starts again, so the throw can be practised.
         newOverlay.whenFinished = {
-            let wait = SKAction.wait(forDuration: 0.8)
+            let wait = SKAction.wait(forDuration: 0.9)
             let again = SKAction.run { self.showThrowScreen() }
             self.run(SKAction.sequence([wait, again]))
         }
-
         addChild(newOverlay)
         overlay = newOverlay
     }
 
     override func update(_ currentTime: TimeInterval) {
-        if timeOfLastFrame == 0 {
-            timeOfLastFrame = currentTime
-        }
-
+        if timeOfLastFrame == 0 { timeOfLastFrame = currentTime }
         var gap = currentTime - timeOfLastFrame
-        if gap > 0.1 {
-            gap = 0.1
-        }
+        if gap > 0.1 { gap = 0.1 }
         timeOfLastFrame = currentTime
-
         overlay?.update(secondsSinceLastFrame: gap)
     }
 }

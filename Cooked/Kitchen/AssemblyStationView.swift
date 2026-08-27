@@ -57,8 +57,9 @@ struct AssemblyStationView: View {
     @State private var isWorking = false
     /// 0...1 for the bar across the top.
     @State private var progress: Double = 0
-    /// Where the piping bag currently sits on its orbit, in radians.
-    @State private var pipingAngle: Double = -.pi / 2
+    /// Flipped back and forth fast to shiver the piping bag while the cream
+    /// goes on. Only meaningful while assembling.
+    @State private var vibrate = false
     /// Last touch angle around the cake, for measuring how far a drag swept.
     @State private var lastTouchAngle: Double?
     /// The phone's own tilt-and-swirl, on hardware that has the sensor.
@@ -171,18 +172,28 @@ struct AssemblyStationView: View {
     private static let helpFrame = CGRect(x: 25, y: 334, width: 53, height: 47)
     private static let clockFrame = CGRect(x: 783, y: 32, width: 66, height: 72)
 
-    /// The piping bag, pre-rotation, and the tilt it is drawn at.
-    private static let pipingSize = CGSize(width: 82, height: 189)
-    private static let pipingTilt: Double = 65.43
-    /// Where it rests when nobody is working — tucked into the right paw.
-    private static let pipingRest = CGPoint(x: 800, y: 330)
-    /// The orbit it flies while the cream goes on: centred on the cake, wide
-    /// enough that the nozzle traces the rim rather than the middle.
-    private static let orbitRadius: CGFloat = 130
+    // MARK: Piping bag — EDITABLE
+    //
+    // The bag holds one fixed spot: leaning in from the upper left with its
+    // nozzle on the top of the cake, exactly as the "a & decorate, start B"
+    // frame draws it. It does not travel — while the cream goes on it only
+    // vibrates in place. Every number a chef would want nudged is here.
+    //
+    // All four are in the plain 874x402 artboard, same space as the frames
+    // above, so a change reads straight off the Figma panel.
 
-    private var cakeCentre: CGPoint {
-        CGPoint(x: Self.creamedFrame.midX, y: Self.standFrame.minY)
-    }
+    /// Where the centre of the bag sits. Move this to slide the whole bag.
+    private static let pipingCentre = CGPoint(x: 356, y: 96)
+    /// How big it is drawn (before the tilt is applied).
+    private static let pipingSize = CGSize(width: 74, height: 168)
+    /// Its lean, in degrees. 0 is upright (the leaf on top, nozzle straight
+    /// down). Negative swings the nozzle to the lower right, onto the cake,
+    /// with the bag leaning in from the upper left — the "start B" pose.
+    /// (Positive would lean it the other way, nozzle to the lower left.)
+    private static let pipingTilt: Double = -65.43
+    /// How far it shivers while piping, peak offset in artboard units. 0 stops
+    /// the vibration entirely.
+    private static let pipingVibration: CGFloat = 5
 
     // MARK: Body
 
@@ -227,7 +238,6 @@ struct AssemblyStationView: View {
         .onDisappear { swirl.stop() }
         .onChange(of: swirl.swept) { _, swept in
             guard isWorking, !isDecorating else { return }
-            pipingAngle = swirl.angle
             progress = min(1, swept / sweepNeeded)
             if progress >= 1 { finish() }
         }
@@ -278,8 +288,9 @@ struct AssemblyStationView: View {
         }
     }
 
-    /// The piping bag: parked by the paws until the cream goes on, then flying
-    /// its orbit around the cake.
+    /// The piping bag, leaning in with its nozzle on the cake — the pose the
+    /// "start B" frame draws. It holds that one spot; while the cream goes on
+    /// it vibrates rather than travelling.
     ///
     /// It is drawn by the page rather than read out of the inventory on
     /// purpose. No action at this counter requires a utensil — `GatingBridge`
@@ -288,19 +299,26 @@ struct AssemblyStationView: View {
     /// as held would put a tool in the hand that the rules say isn't there.
     @ViewBuilder
     private func pipingBag(_ geo: GeometryProxy) -> some View {
-        // Nothing to pipe once the cream is on.
-        if cakeLook == .base || (isWorking && !isDecorating) {
-            let centre = isWorking && !isDecorating
-                ? CGPoint(x: cakeCentre.x + Self.orbitRadius * CGFloat(cos(pipingAngle)),
-                          y: cakeCentre.y + Self.orbitRadius * CGFloat(sin(pipingAngle)) * 0.45)
-                : Self.pipingRest
+        // Only while there's a bare creamable cake to work on: the base is on
+        // the stand, and the cream isn't on yet.
+        if cakeLook == .base {
+            // The shiver runs along the bag's own lean, so it reads as the
+            // nozzle jittering against the cake rather than the whole bag
+            // sliding sideways. Zero unless actually piping.
+            let unit = StorageCanvas.scale(in: geo)
+            let amp = (isWorking && !isDecorating) ? Self.pipingVibration : 0
+            let phase = vibrate ? amp : -amp
+            let rad = Self.pipingTilt * .pi / 180
+            let dx = CGFloat(cos(rad)) * phase * unit
+            let dy = CGFloat(sin(rad)) * phase * unit
 
             art("ui-piping")
                 .rotationEffect(.degrees(Self.pipingTilt))
-                .storagePlaced(centre.x - Self.pipingSize.width / 2,
-                               centre.y - Self.pipingSize.height / 2,
+                .storagePlaced(Self.pipingCentre.x - Self.pipingSize.width / 2,
+                               Self.pipingCentre.y - Self.pipingSize.height / 2,
                                Self.pipingSize.width, Self.pipingSize.height,
                                in: geo)
+                .offset(x: dx, y: dy)
                 .allowsHitTesting(false)
         }
     }
@@ -410,8 +428,12 @@ struct AssemblyStationView: View {
                     progress = 0
                     taps = 0
                     lastTouchAngle = nil
-                    pipingAngle = -.pi / 2
-                    if !isDecorating { swirl.reset(); swirl.start() }
+                    if !isDecorating {
+                        swirl.reset(); swirl.start()
+                        withAnimation(.easeInOut(duration: 0.05).repeatForever(autoreverses: true)) {
+                            vibrate = true
+                        }
+                    }
                 }
             }
         }
@@ -492,7 +514,6 @@ struct AssemblyStationView: View {
         // Direction-agnostic: circling either way ices the cake. Insisting on
         // one direction only tells a left-handed player they're doing it wrong.
         progress = min(1, progress + abs(delta) / sweepNeeded)
-        pipingAngle = angle
         if progress >= 1 { finish() }
     }
 
@@ -502,6 +523,7 @@ struct AssemblyStationView: View {
     private func finish() {
         guard let action else { return }
         swirl.stop()
+        withAnimation(.easeInOut(duration: 0.1)) { vibrate = false }
         isWorking = false
         progress = 0
         taps = 0
@@ -521,32 +543,52 @@ struct AssemblyStationView: View {
         }
     }
 
+    /// The instruction, on a bright card so the line art actually reads.
+    ///
+    /// The assemble drawing (`ui-assemble-tutorial`) is near-white line work
+    /// with its own "Tilt / Move in circle" labels baked in — laid straight
+    /// over the dimmed forest it all but vanished, which is what "dim and
+    /// unreadable" was. Tinting it to ink on a cream card is the same trick
+    /// `StationInstructionOverlay` uses, run the other way round: the art is a
+    /// template, so `.foregroundStyle` paints every stroke and the labels a
+    /// solid dark, and the card gives it something to sit on.
     private func tutorialOverlay(_ geo: GeometryProxy) -> some View {
-        ZStack {
-            Color.black.opacity(0.45)
+        // Assembling carries its own labels; decorating (borrowing the
+        // chopping art, which has none) gets a word underneath.
+        let art = isDecorating ? "overlay-chop" : "ui-assemble-tutorial"
+        let caption: String? = isDecorating ? "Tap" : nil
 
-            VStack(spacing: 12) {
-                // Assembling has its own drawing (the two phones: tilt, then
-                // circle). Decorating is the same single tap the chopping
-                // board teaches, so it borrows that station's overlay rather
-                // than having a near-identical one drawn for it.
-                if let art = UIImage(named: isDecorating ? "overlay-chop" : "ui-assemble-tutorial") {
-                    Image(uiImage: art)
+        return ZStack {
+            Color.black.opacity(0.55).ignoresSafeArea()
+
+            VStack(spacing: 10) {
+                if let image = UIImage(named: art) {
+                    Image(uiImage: image)
+                        .renderingMode(.template)
                         .resizable()
                         .scaledToFit()
-                        .frame(maxWidth: geo.size.width * 0.34,
-                               maxHeight: geo.size.height * 0.4)
+                        .foregroundStyle(StationPalette.ink)
+                        .frame(maxWidth: geo.size.width * 0.42,
+                               maxHeight: geo.size.height * 0.44)
                 }
-                // On a simulator there is no sensor to tilt, so this reads
-                // out the fallback the minigame actually listens for rather
-                // than an instruction nothing can follow — the same courtesy
-                // `ActionMotion.instruction` pays to shaking and flicking.
-                Text(isDecorating ? "Tap"
-                     : (TiltSwirlReader.isAvailable ? "Tilt, then move in circle"
-                                                    : "Drag in circles"))
-                    .font(.system(size: 21, weight: .heavy, design: .rounded))
-                    .foregroundStyle(StationPalette.cream)
+                if let caption {
+                    Text(caption)
+                        .font(.system(size: 22, weight: .heavy, design: .rounded))
+                        .foregroundStyle(StationPalette.ink)
+                }
             }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 20)
+            .background(
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .fill(StationPalette.cream)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .stroke(StationPalette.ink.opacity(0.5), lineWidth: 3)
+            )
+            .shadow(color: .black.opacity(0.35), radius: 16, x: 0, y: 8)
+            .padding(24)
         }
         .ignoresSafeArea()
         .contentShape(Rectangle())
@@ -657,62 +699,50 @@ final class TiltSwirlReader: ObservableObject {
 
 extension AssemblyStationView {
 
-    /// Preview seam: open the page already mid-swirl, at a chosen point on the
-    /// piping bag's orbit, so its placement can be worked on in the canvas
-    /// without a running game and without a phone to tilt.
+    /// Preview seam: open the page already mid-work, so the piping bag's fixed
+    /// placement can be tuned in the canvas without a running game.
     ///
     /// It lives in an extension so the memberwise init survives — declaring an
     /// init inside the struct would remove it, and `StationPage` calls it.
-    /// Nothing in the app uses this one.
     init(station: StationID, session: KitchenSession, inventory: PlayerInventory,
-         onClose: @escaping () -> Void, swirlingAt angle: Double) {
+         onClose: @escaping () -> Void, midWork: Bool) {
         self.init(station: station, session: session, inventory: inventory, onClose: onClose)
-        _isWorking = State(initialValue: true)
-        _pipingAngle = State(initialValue: angle)
+        _isWorking = State(initialValue: midWork)
         _showTutorial = State(initialValue: false)
     }
 }
 
 /// A host session with the base already on the stand, which is what makes the
-/// piping bag appear at all — it is drawn for `.base` and while assembling.
+/// piping bag appear — it is drawn for `.base`.
 @MainActor private func tableWithBase() -> KitchenSession {
     let session = KitchenSession(role: .host)
     session.deposit("bakedBase", at: .table)
     return session
 }
 
-#Preview("Piping — resting in the paw", traits: .landscapeLeft) {
+#Preview("Piping — bag resting on the cake", traits: .landscapeLeft) {
     AssemblyStationView(station: .table,
                         session: tableWithBase(),
                         inventory: PlayerInventory(),
                         onClose: {})
 }
 
-// The orbit is an ellipse, so it is worth seeing all four quarters: the top
-// and bottom set `orbitRadius` against the cake, the sides show whether the
-// 0.45 vertical squash is right.
-#Preview("Piping — orbit, top (12 o'clock)", traits: .landscapeLeft) {
-    AssemblyStationView(station: .table, session: tableWithBase(),
-                        inventory: PlayerInventory(), onClose: {},
-                        swirlingAt: -.pi / 2)
+// Mid-work: the tutorial is dismissed and the bag is where it vibrates. The
+// canvas is static so the shiver won't play, but the resting pose is what the
+// placement is judged on anyway.
+#Preview("Piping — mid-pipe (vibrating)", traits: .landscapeLeft) {
+    AssemblyStationView(station: .table,
+                        session: tableWithBase(),
+                        inventory: PlayerInventory(),
+                        onClose: {},
+                        midWork: true)
 }
 
-#Preview("Piping — orbit, right (3 o'clock)", traits: .landscapeLeft) {
-    AssemblyStationView(station: .table, session: tableWithBase(),
-                        inventory: PlayerInventory(), onClose: {},
-                        swirlingAt: 0)
-}
-
-#Preview("Piping — orbit, bottom (6 o'clock)", traits: .landscapeLeft) {
-    AssemblyStationView(station: .table, session: tableWithBase(),
-                        inventory: PlayerInventory(), onClose: {},
-                        swirlingAt: .pi / 2)
-}
-
-#Preview("Piping — orbit, left (9 o'clock)", traits: .landscapeLeft) {
-    AssemblyStationView(station: .table, session: tableWithBase(),
-                        inventory: PlayerInventory(), onClose: {},
-                        swirlingAt: .pi)
+#Preview("Tutorial — assemble", traits: .landscapeLeft) {
+    AssemblyStationView(station: .table,
+                        session: tableWithBase(),
+                        inventory: PlayerInventory(),
+                        onClose: {})
 }
 
 #Preview("Empty stand — nothing dropped", traits: .landscapeLeft) {

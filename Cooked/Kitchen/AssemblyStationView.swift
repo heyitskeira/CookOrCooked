@@ -545,17 +545,16 @@ struct AssemblyStationView: View {
 
     /// The instruction, on a bright card so the line art actually reads.
     ///
-    /// The assemble drawing (`ui-assemble-tutorial`) is near-white line work
-    /// with its own "Tilt / Move in circle" labels baked in — laid straight
-    /// over the dimmed forest it all but vanished, which is what "dim and
-    /// unreadable" was. Tinting it to ink on a cream card is the same trick
-    /// `StationInstructionOverlay` uses, run the other way round: the art is a
-    /// template, so `.foregroundStyle` paints every stroke and the labels a
-    /// solid dark, and the card gives it something to sit on.
+    /// The assemble drawing (`ui-assemble-tutorial-2`) is dark line work with
+    /// its own "Tilt / Move in circle" labels baked in, so it is drawn as-is —
+    /// no tint. The earlier `-tutorial` art was near-white and vanished into
+    /// the dimmed forest, which is what "dim and unreadable" was; the cream
+    /// card was meant to carry it but a tinted near-white stroke on cream is
+    /// still faint. Dark art on the cream card is the reliable pairing.
+    /// Decorating borrows the chopping art (`overlay-chop`), which is a
+    /// template with no labels, so that one is tinted to ink and captioned.
     private func tutorialOverlay(_ geo: GeometryProxy) -> some View {
-        // Assembling carries its own labels; decorating (borrowing the
-        // chopping art, which has none) gets a word underneath.
-        let art = isDecorating ? "overlay-chop" : "ui-assemble-tutorial"
+        let art = isDecorating ? "overlay-chop" : "ui-assemble-tutorial-2"
         let caption: String? = isDecorating ? "Tap" : nil
 
         return ZStack {
@@ -564,12 +563,14 @@ struct AssemblyStationView: View {
             VStack(spacing: 10) {
                 if let image = UIImage(named: art) {
                     Image(uiImage: image)
-                        .renderingMode(.template)
+                        // Assemble art is already dark; only the borrowed
+                        // chopping template needs tinting to read on cream.
+                        .renderingMode(isDecorating ? .template : .original)
                         .resizable()
                         .scaledToFit()
                         .foregroundStyle(StationPalette.ink)
-                        .frame(maxWidth: geo.size.width * 0.42,
-                               maxHeight: geo.size.height * 0.44)
+                        .frame(maxWidth: geo.size.width * 0.5,
+                               maxHeight: geo.size.height * 0.42)
                 }
                 if let caption {
                     Text(caption)

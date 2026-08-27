@@ -578,22 +578,6 @@ private struct WorkInput: ViewModifier {
     }
 }
 
-#Preview("Empty stand — nothing dropped", traits: .landscapeLeft) {
-    AssemblyStationView(station: .table,
-                        session: KitchenSession(role: .host),
-                        inventory: PlayerInventory(),
-                        onClose: {})
-}
-
-#Preview("Carrying the baked base", traits: .landscapeLeft) {
-    AssemblyStationView(station: .table,
-                        session: KitchenSession(role: .host),
-                        inventory: PlayerInventory(ingredient: HeldIngredient(id: "bakedBase",
-                                                                              name: "Baked base",
-                                                                              isPrep: true)),
-                        onClose: {})
-}
-
 // MARK: - Tilt and swirl
 
 /// Reads the phone being tilted and walked round in a circle — the gesture the
@@ -666,4 +650,74 @@ final class TiltSwirlReader: ObservableObject {
         lastAngle = nil
         angle = -.pi / 2
     }
+}
+
+
+// MARK: - Previews
+
+extension AssemblyStationView {
+
+    /// Preview seam: open the page already mid-swirl, at a chosen point on the
+    /// piping bag's orbit, so its placement can be worked on in the canvas
+    /// without a running game and without a phone to tilt.
+    ///
+    /// It lives in an extension so the memberwise init survives — declaring an
+    /// init inside the struct would remove it, and `StationPage` calls it.
+    /// Nothing in the app uses this one.
+    init(station: StationID, session: KitchenSession, inventory: PlayerInventory,
+         onClose: @escaping () -> Void, swirlingAt angle: Double) {
+        self.init(station: station, session: session, inventory: inventory, onClose: onClose)
+        _isWorking = State(initialValue: true)
+        _pipingAngle = State(initialValue: angle)
+        _showTutorial = State(initialValue: false)
+    }
+}
+
+/// A host session with the base already on the stand, which is what makes the
+/// piping bag appear at all — it is drawn for `.base` and while assembling.
+@MainActor private func tableWithBase() -> KitchenSession {
+    let session = KitchenSession(role: .host)
+    session.deposit("bakedBase", at: .table)
+    return session
+}
+
+#Preview("Piping — resting in the paw", traits: .landscapeLeft) {
+    AssemblyStationView(station: .table,
+                        session: tableWithBase(),
+                        inventory: PlayerInventory(),
+                        onClose: {})
+}
+
+// The orbit is an ellipse, so it is worth seeing all four quarters: the top
+// and bottom set `orbitRadius` against the cake, the sides show whether the
+// 0.45 vertical squash is right.
+#Preview("Piping — orbit, top (12 o'clock)", traits: .landscapeLeft) {
+    AssemblyStationView(station: .table, session: tableWithBase(),
+                        inventory: PlayerInventory(), onClose: {},
+                        swirlingAt: -.pi / 2)
+}
+
+#Preview("Piping — orbit, right (3 o'clock)", traits: .landscapeLeft) {
+    AssemblyStationView(station: .table, session: tableWithBase(),
+                        inventory: PlayerInventory(), onClose: {},
+                        swirlingAt: 0)
+}
+
+#Preview("Piping — orbit, bottom (6 o'clock)", traits: .landscapeLeft) {
+    AssemblyStationView(station: .table, session: tableWithBase(),
+                        inventory: PlayerInventory(), onClose: {},
+                        swirlingAt: .pi / 2)
+}
+
+#Preview("Piping — orbit, left (9 o'clock)", traits: .landscapeLeft) {
+    AssemblyStationView(station: .table, session: tableWithBase(),
+                        inventory: PlayerInventory(), onClose: {},
+                        swirlingAt: .pi)
+}
+
+#Preview("Empty stand — nothing dropped", traits: .landscapeLeft) {
+    AssemblyStationView(station: .table,
+                        session: KitchenSession(role: .host),
+                        inventory: PlayerInventory(),
+                        onClose: {})
 }
